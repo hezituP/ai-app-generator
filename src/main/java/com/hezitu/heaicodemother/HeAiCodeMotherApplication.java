@@ -6,6 +6,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
 @MapperScan("com.hezitu.heaicodemother.mapper")
+
 public class HeAiCodeMotherApplication {
 
     public static void main (String[] args) {
