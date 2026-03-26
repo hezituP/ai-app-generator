@@ -2,6 +2,12 @@ spring:
   application:
     name: he-ai-code-mother
 
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: "jdbc:mysql://localhost:3306/yu_ai_code_mother?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai"
+    username: root
+    password: 123456
+
 server:
   port: 8848
   servlet:
