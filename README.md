@@ -1,4 +1,4 @@
-# He AI Code Mother（合智图 AI 代码母机）
+# He AI Code Mother（合智图 AI 零代码生成器）
 
 > 基于 Spring Boot 3 + Vue 3 + LangChain4j 构建的 AI 驱动代码生成平台，支持多种代码生成模式与 SSE 流式输出。
 
