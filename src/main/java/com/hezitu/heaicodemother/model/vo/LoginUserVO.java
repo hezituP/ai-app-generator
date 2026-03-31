@@ -1,10 +1,13 @@
 package com.hezitu.heaicodemother.model.vo;
 
+import lombok.Data;
+
 import java.io.Serializable;
 
 /**
  * 表示脱敏后的用户登录信息
  */
+@Data
 public class LoginUserVO implements Serializable {
 
     /**

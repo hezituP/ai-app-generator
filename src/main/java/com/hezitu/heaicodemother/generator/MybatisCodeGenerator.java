@@ -3,7 +3,6 @@ package com.hezitu.heaicodemother.generator;
 import cn.hutool.core.lang.Dict;
 import cn.hutool.setting.yaml.YamlUtil;
 import com.mybatisflex.codegen.Generator;
-import com.mybatisflex.codegen.config.ColumnConfig;
 import com.mybatisflex.codegen.config.GlobalConfig;
 import com.zaxxer.hikari.HikariDataSource;
 
@@ -11,10 +10,15 @@ import java.util.Map;
 
 /**
  * Mybatis 代码生成器
+ *
+ * @author hezitu
  */
 public class MybatisCodeGenerator {
 
-    public static void main (String[] args) {
+    // 要生成的表名，按需修改
+    private static final String[] TABLE_NAMES = {"chat_history"};
+
+    public static void main(String[] args) {
         // 获取配置信息
         Dict dict = YamlUtil.loadByPath("application.yml");
         Map<String, Object> dataSourceConfig = dict.getByPath("spring.datasource");
@@ -38,16 +42,17 @@ public class MybatisCodeGenerator {
         generator.generate();
     }
 
-    public static GlobalConfig createGlobalConfig () {
-        // 创建配置内容
+    public static GlobalConfig createGlobalConfig() {
         GlobalConfig globalConfig = new GlobalConfig();
 
-        // 设置根包
+        // ✅ 设置代码输出目录（src/main/java 路径）
         globalConfig.getPackageConfig()
-                .setBasePackage("com.test");
+                .setBasePackage("com.hezitu.heaicodemother")
+                .setSourceDir(System.getProperty("user.dir") + "/he-ai-code-mother/src/main/java");
 
-        // 不指定 setGenerateTable 时，默认生成当前库所有表
+        // ✅ 只生成指定的表
         globalConfig.getStrategyConfig()
+                .setGenerateTable(TABLE_NAMES)
                 // 设置逻辑删除字段
                 .setLogicDeleteColumn("isDelete");
 
@@ -67,18 +72,10 @@ public class MybatisCodeGenerator {
         // 设置生成 CONTROLLER
         globalConfig.enableController();
 
-        // 设置生成注释，生成的是时间和作者，避免后续代码改动
+        // 设置生成注释
         globalConfig.getJavadocConfig()
                 .setAuthor("hezitu")
                 .setSince("");
-
-        // 可以单独配置某个列
-        ColumnConfig columnConfig = new ColumnConfig();
-        columnConfig.setColumnName("tenant_id");
-        columnConfig.setLarge(true);
-        columnConfig.setVersion(true);
-        globalConfig.getStrategyConfig()
-                .setColumnConfig("tb_account", columnConfig);
 
         return globalConfig;
     }
