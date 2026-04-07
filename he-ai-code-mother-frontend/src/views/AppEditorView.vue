@@ -1,230 +1,262 @@
-<template>
+﻿<template>
   <div class="editor-page">
-    <div class="editor-topbar">
-      <div class="topbar-left">
-        <router-link to="/my-apps" class="back-btn"><ArrowLeftOutlined /></router-link>
-        <div class="app-title-wrap">
-          <span class="app-title">{{ app?.appName || '加载中...' }}</span>
-          <span class="app-type-tag" v-if="app">{{ fmtType(app.codeGenType) }}</span>
-        </div>
+    <header class="page-header">
+      <div>
+        <router-link to="/my-apps" class="back-link">返回应用列表</router-link>
+        <h1>{{ app?.appName || '加载中...' }}</h1>
+        <p>{{ typeLabel }}</p>
       </div>
-      <div class="topbar-actions">
-        <a-button size="small" class="btn-deploy-top" @click="handleDeploy" :loading="deploying"><RocketOutlined /> {{ app?.deployKey ? '查看部署' : '部署' }}</a-button>
-        <a-button size="small" @click="handleDownload"><DownloadOutlined /> 下载</a-button>
+      <div class="header-actions">
+        <a-button @click="handleDownload"><DownloadOutlined /> 下载代码</a-button>
+        <a-button type="primary" :loading="deploying" @click="handleDeploy">
+          <RocketOutlined /> {{ app?.deployKey ? '查看部署' : '部署' }}
+        </a-button>
       </div>
-    </div>
-    <div class="editor-main">
-      <div class="chat-panel">
-        <div class="chat-header">
-          <div class="chat-title"><span class="ai-dot"></span> AI 对话</div>
-          <a-tooltip title="清空"><a-button type="text" size="small" class="clear-btn" @click="clearMessages"><DeleteOutlined /></a-button></a-tooltip>
+    </header>
+
+    <main class="editor-layout">
+      <section class="agent-panel">
+        <div class="panel-head">
+          <div class="panel-title">Agent 协作区</div>
+          <p>在这里继续描述修改需求，生成过程会按时间顺序返回。</p>
         </div>
-        <div class="chat-messages" ref="messagesRef">
-          <div class="welcome-msg" v-if="messages.length === 0">
-            <div class="welcome-icon">✨</div>
-            <h3>开始与 AI 对话</h3>
-            <p>描述你想要的功能，AI 将自动生成代码</p>
-            <div class="quick-prompts">
-              <div v-for="q in quickPrompts" :key="q" class="quick-prompt" @click="sendQuick(q)">{{ q }}</div>
+        <div class="event-list" ref="messagesRef">
+          <div v-if="events.length === 0" class="empty-block">
+            <h3>开始一次工程化生成</h3>
+            <p>描述页面结构、风格、路由和交互需求，Agent 会以流式方式生成完整工程。</p>
+          </div>
+          <div v-for="item in events" :key="item.id" class="event-item" :class="item.type">
+            <strong>{{ item.title }}</strong>
+            <p>{{ item.message }}</p>
+          </div>
+        </div>
+        <a-textarea
+          v-model:value="inputMsg"
+          :rows="4"
+          :disabled="streaming"
+          placeholder="例如：生成一个 SaaS 官网，包含首页、价格页、案例页、联系我们表单，并使用清爽的蓝绿色视觉风格"
+          @keydown.ctrl.enter.prevent="handleSend"
+        />
+        <div class="panel-actions">
+          <span>Ctrl + Enter 发送</span>
+          <a-button type="primary" :loading="streaming" @click="handleSend">发送给 Agent</a-button>
+        </div>
+      </section>
+
+      <section class="workspace-panel">
+        <div class="workspace-header">
+          <div class="tabs">
+            <button :class="{ active: activeTab === 'project' }" @click="activeTab = 'project'">工程文件</button>
+            <button :class="{ active: activeTab === 'preview' }" @click="activeTab = 'preview'">预览</button>
+          </div>
+          <a-button size="small" @click="refreshSnapshot">刷新快照</a-button>
+        </div>
+
+        <div v-if="activeTab === 'project'" class="project-panel">
+          <aside class="file-tree">
+            <div class="summary-card">
+              <strong>工程摘要</strong>
+              <p>{{ projectSnapshot?.summary || '生成完成后会展示工程摘要' }}</p>
             </div>
-          </div>
-          <div v-for="msg in messages" :key="msg.id" :class="['msg', msg.role]">
-            <div class="msg-avatar"><span v-if="msg.role === 'user'">U</span><span v-else>AI</span></div>
-            <div class="msg-bubble">
-              <div class="msg-content" v-html="msg.content"></div>
-              <div class="msg-time">{{ msg.time }}</div>
-            </div>
-          </div>
-          <div v-if="streaming" class="msg assistant">
-            <div class="msg-avatar"><span>AI</span></div>
-            <div class="msg-bubble"><div class="msg-content" v-html="streamingContent || '<span>...</span>'"></div></div>
-          </div>
-        </div>
-        <div class="chat-input-wrap">
-          <a-textarea v-model:value="inputMsg" placeholder="请描述你想生成的网站，越详细效果越好哦" :rows="3" class="chat-textarea" @keydown.ctrl.enter="handleSend" :disabled="streaming" />
-          <div class="chat-input-footer">
-            <span class="hint">Ctrl+Enter 发送</span>
-            <a-button type="primary" @click="handleSend" :loading="streaming" :disabled="!inputMsg.trim()" class="send-btn"><SendOutlined /> 发送</a-button>
+            <button
+              v-for="file in projectFiles"
+              :key="file.path"
+              class="file-item"
+              :class="{ active: selectedFilePath === file.path }"
+              @click="selectedFilePath = file.path"
+            >
+              {{ file.path }}
+            </button>
+          </aside>
+
+          <div class="code-viewer">
+            <div class="code-header">{{ selectedFilePath || '暂无文件' }}</div>
+            <pre><code>{{ selectedFileContent }}</code></pre>
           </div>
         </div>
-      </div>
-      <div class="preview-panel">
-        <div class="preview-header">
-          <div class="preview-tabs">
-            <button :class="['tab',{active:activeTab==='preview'}]" @click="activeTab='preview'">预览</button>
-            <button :class="['tab',{active:activeTab==='code'}]" @click="activeTab='code'">代码</button>
+
+        <div v-else class="preview-panel">
+          <div v-if="projectSnapshot?.previewUrl" class="iframe-wrap">
+            <iframe :src="resolvedPreviewUrl" title="preview"></iframe>
           </div>
-          <div class="preview-actions">
-            <a-tooltip title="刷新"><a-button type="text" size="small" class="icon-btn" @click="refreshPreview"><ReloadOutlined /></a-button></a-tooltip>
-            <a-tooltip title="新窗口"><a-button type="text" size="small" class="icon-btn" @click="openInNewTab"><ExpandAltOutlined /></a-button></a-tooltip>
+          <div v-else class="empty-block preview-empty">
+            <h3>当前模式不提供直接静态预览</h3>
+            <p>Vue3 + Vite 工程已经生成完成，你可以在右侧文件区查看全部源码，或直接下载整个工程。</p>
           </div>
         </div>
-        <div class="preview-body">
-          <div v-if="activeTab==='preview'" class="iframe-wrap">
-            <div v-if="!previewReady" class="preview-empty"><CodeOutlined class="empty-icon"/><p>发送消息后预览将在这里显示</p></div>
-            <iframe v-show="previewReady" ref="iframeRef" class="preview-iframe" :src="previewUrl" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
-          </div>
-          <div v-else class="code-wrap">
-            <pre class="code-content"><code>{{ previewUrl ? `预览地址: ${previewUrl}` : '// 代码将在 AI 生成完毕后通过静态服务展示' }}</code></pre>
-          </div>
-        </div>
-      </div>
-    </div>
+      </section>
+    </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
+import { DownloadOutlined, RocketOutlined } from '@ant-design/icons-vue'
 import {
-  ArrowLeftOutlined, RocketOutlined, DownloadOutlined, DeleteOutlined,
-  SendOutlined, ReloadOutlined, ExpandAltOutlined, CodeOutlined
-} from '@ant-design/icons-vue'
-import { getAppVOByIdApi, deployAppApi, downloadAppCodeApi, type AppVO } from '@/api/app'
+  deployAppApi,
+  downloadAppCodeApi,
+  getAppVOByIdApi,
+  getProjectSnapshotApi,
+  type AgentStreamEvent,
+  type AppProjectFileVO,
+  type AppProjectSnapshotVO,
+  type AppVO,
+} from '@/api/app'
 import myAxios from '@/plugins/myAxios'
 
 const route = useRoute()
-const router = useRouter()
 const appId = route.params.id as string
 
 const app = ref<AppVO | null>(null)
-const activeTab = ref<'preview' | 'code'>('preview')
+const projectSnapshot = ref<AppProjectSnapshotVO | null>(null)
+const activeTab = ref<'project' | 'preview'>('project')
 const inputMsg = ref('')
-const messages = ref<{ id: number; role: 'user' | 'assistant'; content: string; time: string }[]>([])
 const streaming = ref(false)
-const streamingContent = ref('')
-const previewUrl = ref('')
-const previewReady = ref(false)
 const deploying = ref(false)
+const selectedFilePath = ref('')
 const messagesRef = ref<HTMLElement | null>(null)
-const iframeRef = ref<HTMLIFrameElement | null>(null)
-let msgId = 0
+const events = ref<{ id: number; type: string; title: string; message: string }[]>([])
+let eventId = 0
 let eventSource: EventSource | null = null
 
-const quickPrompts = [
-  '帮我添加一个导航栏',
-  '增加响应式布局',
-  '添加暗色模式切换',
-  '优化页面配色方案',
-]
+const typeLabel = computed(() => {
+  const map: Record<string, string> = {
+    html: '原生 HTML 模式',
+    multi_file: '多文件站点模式',
+    vue_project: 'Vue3 + Vite 工程模式',
+  }
+  return map[app.value?.codeGenType || ''] || app.value?.codeGenType || ''
+})
 
-function fmtType(t: string) {
-  return ({ html: 'HTML', vue: 'Vue', react: 'React', multi_file: '多文件' } as Record<string, string>)[t] || t
-}
-
-function now() {
-  return new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-}
-
-function scrollToBottom() {
-  setTimeout(() => {
-    if (messagesRef.value) messagesRef.value.scrollTop = messagesRef.value.scrollHeight
-  }, 50)
-}
+const projectFiles = computed(() => projectSnapshot.value?.files || [])
+const selectedFileContent = computed(() => {
+  const file = projectFiles.value.find((item) => item.path === selectedFilePath.value)
+  return file?.content || ''
+})
+const resolvedPreviewUrl = computed(() => {
+  if (!projectSnapshot.value?.previewUrl) return ''
+  const baseURL = (myAxios.defaults.baseURL || '') as string
+  return `${baseURL.replace(/\/api$/, '')}${projectSnapshot.value.previewUrl}`
+})
 
 async function loadApp() {
+  const res = await getAppVOByIdApi(appId)
+  if (res.data.code === 0 && res.data.data) {
+    const data = res.data.data as AppVO
+    app.value = data
+    activeTab.value = data.codeGenType === 'vue_project' ? 'project' : 'preview'
+  }
+}
+
+async function refreshSnapshot() {
   try {
-    const res = await getAppVOByIdApi(appId)
+    const res = await getProjectSnapshotApi(appId)
     if (res.data.code === 0) {
-      app.value = res.data.data
-      if (app.value?.deployKey) {
-        previewUrl.value = `/api/preview/${app.value.deployKey}`
-        previewReady.value = true
-      }
-    } else {
-      message.error('应用不存在')
-      router.push('/my-apps')
+      applySnapshot(res.data.data)
     }
   } catch {
-    message.error('加载失败')
+    projectSnapshot.value = null
   }
+}
+
+function applySnapshot(snapshot: AppProjectSnapshotVO | null) {
+  projectSnapshot.value = snapshot
+  const files = snapshot?.files || []
+  if (!files.length) {
+    selectedFilePath.value = ''
+    return
+  }
+  const matchedFile = files.find((item) => item.path === selectedFilePath.value)
+  if (!selectedFilePath.value || !matchedFile) {
+    selectedFilePath.value = snapshot?.entryFilePath || files[0]?.path || ''
+  }
+}
+
+function pushEvent(type: string, messageText: string) {
+  const titleMap: Record<string, string> = {
+    status: '状态更新',
+    result: '结果就绪',
+    error: '发生错误',
+    done: '流程结束',
+  }
+  events.value.push({
+    id: ++eventId,
+    type,
+    title: titleMap[type] || '消息',
+    message: messageText,
+  })
+  nextTick(() => {
+    if (messagesRef.value) {
+      messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+    }
+  })
 }
 
 async function handleSend() {
   const content = inputMsg.value.trim()
   if (!content || streaming.value) return
   inputMsg.value = ''
-  messages.value.push({ id: ++msgId, role: 'user', content, time: now() })
-  scrollToBottom()
+  pushEvent('status', `需求已提交：${content}`)
   streaming.value = true
-  streamingContent.value = ''
 
-  try {
-    const baseURL = (myAxios.defaults.baseURL || '') as string
-    const url = `${baseURL}/app/chat/gen/code?appId=${appId}&message=${encodeURIComponent(content)}`
-    eventSource = new EventSource(url, { withCredentials: true })
+  const baseURL = (myAxios.defaults.baseURL || '') as string
+  const url = `${baseURL}/app/chat/gen/code?appId=${appId}&message=${encodeURIComponent(content)}`
+  eventSource = new EventSource(url, { withCredentials: true })
 
-    eventSource.onmessage = (e) => {
-      try {
-        const parsed = JSON.parse(e.data)
-        const chunk = parsed.d ?? parsed.content ?? ''
-        if (chunk) {
-          streamingContent.value += chunk
-        }
-      } catch {
-        if (e.data) {
-          streamingContent.value += e.data
-        }
-      }
-      scrollToBottom()
+  eventSource.onmessage = (event) => {
+    const payload = JSON.parse(event.data) as AgentStreamEvent
+    if (payload.type === 'result') {
+      applySnapshot(payload.data || null)
+      pushEvent(payload.type, payload.message || '工程生成完成')
+      activeTab.value = 'project'
+      return
     }
-
-    eventSource.addEventListener('done', () => {
-      finishStream()
-    })
-
-    eventSource.onerror = () => {
-      finishStream()
+    if (payload.type === 'done') {
+      pushEvent(payload.type, '本轮 Agent 任务已结束')
+      closeStream()
+      return
     }
-  } catch {
-    message.error('发送失败')
-    streaming.value = false
+    pushEvent(payload.type, payload.message || '收到新的 Agent 状态')
+  }
+
+  eventSource.onerror = () => {
+    pushEvent('error', '流式连接已中断')
+    closeStream()
   }
 }
 
-function finishStream() {
-  if (eventSource) { eventSource.close(); eventSource = null }
-  if (streamingContent.value) {
-    messages.value.push({ id: ++msgId, role: 'assistant', content: streamingContent.value, time: now() })
-    streamingContent.value = ''
-  }
+function closeStream() {
   streaming.value = false
-  scrollToBottom()
-}
-
-function sendQuick(q: string) {
-  inputMsg.value = q
-  handleSend()
-}
-
-function clearMessages() { messages.value = [] }
-
-function refreshPreview() {
-  if (iframeRef.value && previewUrl.value) {
-    iframeRef.value.src = previewUrl.value
+  if (eventSource) {
+    eventSource.close()
+    eventSource = null
   }
-}
-
-function openInNewTab() {
-  if (previewUrl.value) window.open(previewUrl.value, '_blank')
 }
 
 async function handleDeploy() {
-  if (app.value?.deployKey) { window.open(`/preview/${app.value.deployKey}`, '_blank'); return }
+  if (app.value?.deployKey) {
+    window.open(`/preview/${app.value.deployKey}`, '_blank')
+    return
+  }
   deploying.value = true
   try {
     const res = await deployAppApi(appId)
     if (res.data.code === 0) {
-      message.success('部署成功！')
-      const url = res.data.data as string
-      if (url) window.open(url, '_blank')
+      message.success('部署成功')
+      if (res.data.data) {
+        window.open(res.data.data, '_blank')
+      }
       await loadApp()
     } else {
       message.error(res.data.message || '部署失败')
     }
-  } catch { message.error('网络异常') }
-  finally { deploying.value = false }
+  } catch {
+    message.error('网络异常')
+  } finally {
+    deploying.value = false
+  }
 }
 
 async function handleDownload() {
@@ -237,168 +269,360 @@ async function handleDownload() {
     a.download = `${app.value?.appName || 'app'}.zip`
     a.click()
     URL.revokeObjectURL(url)
-  } catch { message.error('下载失败') }
+  } catch {
+    message.error('下载失败')
+  }
 }
 
-onMounted(() => { loadApp() })
-onUnmounted(() => { if (eventSource) { eventSource.close() } })
+watch(projectFiles, (files: AppProjectFileVO[]) => {
+  if (!files.length) {
+    selectedFilePath.value = ''
+  }
+})
+
+onMounted(async () => {
+  await loadApp()
+  await refreshSnapshot()
+})
+
+onUnmounted(closeStream)
 </script>
 
 <style scoped>
 .editor-page {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  background: linear-gradient(120deg, #84fab0 0%, #8fd3f4 100%);
-  color: #1a3a2a;
-  overflow: hidden;
-  padding-top: 58px;
+  min-height: 100vh;
+  padding: 82px 24px 28px;
+  background: linear-gradient(135deg, #f5e7ff 0%, #ffe6ef 34%, #fff1dc 68%, #edf6ff 100%);
 }
 
-.editor-topbar {
+.editor-page::before,
+.editor-page::after {
+  content: '';
+  position: fixed;
+  border-radius: 50%;
+  pointer-events: none;
+  filter: blur(18px);
+  z-index: 0;
+}
+
+.editor-page::before {
+  top: 86px;
+  left: -90px;
+  width: 280px;
+  height: 280px;
+  background: radial-gradient(circle, rgba(162, 155, 254, 0.26), transparent 70%);
+}
+
+.editor-page::after {
+  right: -70px;
+  bottom: 140px;
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, rgba(72, 219, 251, 0.22), transparent 72%);
+}
+
+.page-header,
+.editor-layout {
+  position: relative;
+  z-index: 1;
+}
+
+.page-header {
+  max-width: 1400px;
+  margin: 0 auto 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
-  height: 48px;
-  background: rgba(255,255,255,0.7);backdrop-filter:blur(12px);
-  border-bottom: 1px solid rgba(132,250,176,0.3);
-  flex-shrink: 0;
+  gap: 16px;
+}
+
+.back-link {
+  color: #7b5adb;
+}
+
+.page-header h1 {
+  margin: 8px 0 4px;
+  background: linear-gradient(135deg, #fd79a8 0%, #a29bfe 55%, #48dbfb 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.page-header p {
+  margin: 0;
+  color: #786f91;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.header-actions :deep(.ant-btn) {
+  border-radius: 999px;
+}
+
+.editor-layout {
+  max-width: 1400px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 20px;
+}
+
+.agent-panel,
+.workspace-panel {
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.66);
+  box-shadow: 0 18px 36px rgba(130, 112, 162, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+.agent-panel {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: rgba(255, 255, 255, 0.44);
+}
+
+.panel-head p {
+  margin: 6px 0 0;
+  color: #857b9f;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.panel-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #3b3457;
+}
+
+.event-list {
+  min-height: 420px;
+  max-height: 60vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
+  padding: 2px 0;
 }
 
-.topbar-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.event-item,
+.empty-block,
+.summary-card,
+.file-item {
+  background: rgba(255, 255, 255, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  box-shadow: none;
+}
 
-.back-btn {
+.event-item {
+  position: relative;
+  padding: 14px 14px 14px 18px;
+  border-radius: 18px;
+  animation: riseIn 0.35s ease both;
+}
+
+.event-item.status {
+  border-left: 3px solid #6c5ce7;
+}
+
+.event-item.result {
+  border-left: 3px solid #00b894;
+}
+
+.event-item.error {
+  border-left: 3px solid #ff7675;
+}
+
+.event-item.done {
+  border-left: 3px solid #8e8ca8;
+}
+
+.event-item strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #3b3457;
+  font-size: 14px;
+}
+
+.event-item p {
+  margin: 0;
+  color: #746b90;
+  line-height: 1.65;
+}
+
+.panel-actions {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: rgba(255,255,255,0.4);
-  color: #2d6a4f;
-  text-decoration: none;
-  transition: all 0.18s;
-  flex-shrink: 0;
+  color: #7b7394;
+  padding: 0 2px;
 }
-.back-btn:hover { background: rgba(132,250,176,0.3); color: #1a6a4f; }
 
-.app-title-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.app-title { font-size: 14px; font-weight: 700; color: #1a3a2a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
-.app-type-tag { padding: 2px 8px; background: rgba(132,250,176,0.25); border: 1px solid rgba(58,176,160,0.4); border-radius: 12px; font-size: 11px; font-weight: 700; color: #1a6a4f; flex-shrink: 0; }
+.agent-panel :deep(.ant-input) {
+  border: none !important;
+  border-radius: 20px !important;
+  background: rgba(255, 255, 255, 0.26) !important;
+  color: #4f4768 !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.48) !important;
+  backdrop-filter: blur(8px);
+}
 
-.topbar-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.btn-deploy-top { border-radius: 7px !important; font-size: 12px !important; font-weight: 700 !important; background: linear-gradient(135deg, #3ab0a0, #2d8a7a) !important; border: none !important; color: white !important; display: flex !important; align-items: center !important; gap: 4px !important; }
+.agent-panel :deep(.ant-input:focus),
+.agent-panel :deep(.ant-input-focused) {
+  box-shadow: inset 0 0 0 1px rgba(135, 176, 255, 0.38) !important;
+}
 
-.editor-main {
-  display: flex;
-  flex: 1;
+.workspace-panel {
   overflow: hidden;
 }
 
-.chat-panel {
-  flex: 2;
+.workspace-header {
+  padding: 16px 18px;
   display: flex;
-  flex-direction: column;
-  border-right: 1px solid rgba(196,113,237,0.12);
-  background: rgba(255,255,255,0.55);
-  min-width: 0;
-}
-
-.chat-header {
-  display: flex;
-  align-items: center;
   justify-content: space-between;
-  padding: 10px 16px;
-  border-bottom: 1px solid rgba(132,250,176,0.25);
-  flex-shrink: 0;
-}
-
-.chat-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: #2d6a4f; }
-.ai-dot { width: 7px; height: 7px; border-radius: 50%; background: linear-gradient(135deg, #84fab0, #3ab0a0); box-shadow: 0 0 6px rgba(132,250,176,0.6); animation: pulse 2s infinite; }
-@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
-.clear-btn { color: #4a8a6a !important; }
-.clear-btn:hover { color: #f64f59 !important; }
-
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  scroll-behavior: smooth;
-}
-.chat-messages::-webkit-scrollbar { width: 4px; }
-.chat-messages::-webkit-scrollbar-track { background: transparent; }
-.chat-messages::-webkit-scrollbar-thumb { background: rgba(132,250,176,0.4); border-radius: 2px; }
-
-.welcome-msg { text-align: center; padding: 32px 20px; color: #2d6a4f; }
-.welcome-icon { font-size: 36px; margin-bottom: 12px; }
-.welcome-msg h3 { font-size: 16px; font-weight: 700; color: #2d6a4f; margin-bottom: 6px; }
-.welcome-msg p { font-size: 13px; margin-bottom: 18px; }
-
-.quick-prompts { display: flex; flex-direction: column; gap: 6px; max-width: 280px; margin: 0 auto; }
-.quick-prompt { padding: 8px 14px; background: rgba(196,113,237,0.08); border: 1px solid rgba(196,113,237,0.2); border-radius: 8px; font-size: 12px; color: #2d6a4f; cursor: pointer; transition: all 0.16s; text-align: left; }
-.quick-prompt:hover { background: rgba(132,250,176,0.3); border-color: rgba(58,176,160,0.5); color: #1a6a4f; }
-
-.msg { display: flex; gap: 10px; align-items: flex-start; }
-.msg.user { flex-direction: row-reverse; }
-.msg-avatar { width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; flex-shrink: 0; }
-.msg.user .msg-avatar { background: linear-gradient(135deg, #84fab0, #3ab0a0); color: #1a3a2a; }
-.msg.assistant .msg-avatar { background: rgba(143,211,244,0.25); color: #1a6a4f; border: 1px solid rgba(143,211,244,0.4); }
-.msg-bubble { max-width: 85%; }
-.msg.user .msg-bubble { align-items: flex-end; display: flex; flex-direction: column; }
-.msg-content { padding: 9px 13px; border-radius: 10px; font-size: 13px; line-height: 1.6; word-break: break-word; }
-.msg.user .msg-content { background: linear-gradient(135deg, rgba(132,250,176,0.35), rgba(143,211,244,0.3)); border: 1px solid rgba(132,250,176,0.4); color: #1a3a2a; border-radius: 10px 2px 10px 10px; }
-.msg.assistant .msg-content { background: rgba(255,255,255,0.7); border: 1px solid rgba(143,211,244,0.3); color: #1a3a2a; border-radius: 2px 10px 10px 10px; }
-.msg-time { font-size: 10px; color: #5a9a7a; margin-top: 4px; padding: 0 4px; }
-
-.chat-input-wrap {
-  padding: 12px 14px;
-  border-top: 1px solid rgba(196,113,237,0.1);
-  flex-shrink: 0;
-  background: rgba(255,255,255,0.4);
-}
-:deep(.chat-textarea) { border-radius: 10px !important; background: rgba(255,255,255,0.75) !important; border: 1px solid rgba(132,250,176,0.4) !important; color: #1a3a2a !important; font-size: 13px !important; resize: none !important; }
-:deep(.chat-textarea:hover) { border-color: rgba(58,176,160,0.6) !important; }
-:deep(.chat-textarea:focus-within) { border-color: rgba(58,176,160,0.8) !important; box-shadow: 0 0 0 3px rgba(132,250,176,0.15) !important; }
-:deep(.chat-textarea textarea) { background: transparent !important; color: #1a3a2a !important; }
-:deep(.chat-textarea textarea::placeholder) { color: #5a9a7a !important; }
-.chat-input-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
-.hint { font-size: 11px; color: #5a9a7a; }
-.send-btn { border-radius: 8px !important; font-weight: 700 !important; background: linear-gradient(135deg, #84fab0, #3ab0a0) !important; border: none !important; display: flex !important; align-items: center !important; gap: 5px !important; }
-
-.preview-panel {
-  flex: 3;
-  display: flex;
-  flex-direction: column;
-  background: rgba(255,255,255,0.35);
-  min-width: 0;
-}
-.preview-header {
-  display: flex;
   align-items: center;
-  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.34);
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.tabs button {
+  border: none;
+  border-radius: 999px;
   padding: 8px 14px;
-  border-bottom: 1px solid rgba(196,113,237,0.1);
-  flex-shrink: 0;
-  background: rgba(255,255,255,0.6);
+  color: #665d84;
+  background: rgba(245, 241, 251, 0.94);
+  box-shadow: 8px 8px 16px rgba(208, 203, 223, 0.55), -8px -8px 16px rgba(255, 255, 255, 0.96);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
-.preview-tabs { display: flex; gap: 4px; }
-.tab { padding: 5px 14px; border-radius: 7px; font-size: 12px; font-weight: 600; background: transparent; border: none; cursor: pointer; color: #2d6a4f; transition: all 0.16s; }
-.tab.active { background: rgba(132,250,176,0.3); color: #1a6a4f; }
-.tab:hover:not(.active) { color: #2d6a4f; }
-.preview-actions { display: flex; gap: 4px; }
-.icon-btn { color: #2d6a4f !important; }
-.icon-btn:hover { color: #1a6a4f !important; background: rgba(132,250,176,0.2) !important; }
 
-.preview-body { flex: 1; overflow: hidden; position: relative; }
-.iframe-wrap { width: 100%; height: 100%; position: relative; }
-.preview-iframe { width: 100%; height: 100%; border: none; background: white; }
-.preview-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #5a9a7a; gap: 12px; }
-.empty-icon { font-size: 40px; }
-.code-wrap { height: 100%; overflow: auto; padding: 20px; }
-.code-content { font-family: monospace; font-size: 13px; color: #2d6a4f; line-height: 1.6; white-space: pre-wrap; }
+.tabs button.active {
+  background: linear-gradient(135deg, #fd79a8, #a29bfe);
+  color: white;
+  box-shadow: 0 16px 32px rgba(162, 155, 254, 0.22);
+}
+
+.project-panel {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  min-height: 70vh;
+}
+
+.file-tree {
+  padding: 18px;
+  border-right: 1px solid rgba(255, 255, 255, 0.32);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
+
+.summary-card {
+  padding: 16px;
+  border-radius: 20px;
+}
+
+.summary-card strong {
+  color: #3d355a;
+}
+
+.summary-card p {
+  margin: 8px 0 0;
+  color: #766d92;
+}
+
+.file-item {
+  text-align: left;
+  border-radius: 16px;
+  padding: 10px 12px;
+  color: #4a4265;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.file-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 24px rgba(163, 153, 196, 0.18);
+}
+
+.file-item.active {
+  background: linear-gradient(135deg, rgba(253, 121, 168, 0.16), rgba(162, 155, 254, 0.18));
+  color: #5b49b5;
+}
+
+.code-viewer {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.code-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.34);
+  font-weight: 600;
+  color: #4d4468;
+}
+
+.code-viewer pre {
+  margin: 0;
+  padding: 18px;
+  overflow: auto;
+  height: 100%;
+  background: linear-gradient(160deg, rgba(43, 35, 74, 0.94), rgba(20, 30, 57, 0.94));
+  color: #edf1ff;
+}
+
+.preview-panel,
+.iframe-wrap,
+iframe {
+  width: 100%;
+  min-height: 70vh;
+}
+
+iframe {
+  border: none;
+}
+
+.empty-block {
+  padding: 24px;
+  border-radius: 22px;
+}
+
+.preview-empty {
+  margin: 24px;
+}
+
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 1100px) {
+  .editor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .project-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .file-tree {
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.32);
+  }
+}
+
 </style>

@@ -4,29 +4,19 @@ import com.hezitu.heaicodemother.exception.BusinessException;
 import com.hezitu.heaicodemother.exception.ErrorCode;
 import com.hezitu.heaicodemother.model.enums.CodeGenTypeEnum;
 
-/**
- * 代码解析执行器
- * 根据代码生成类型执行相应的解析逻辑
- *
- * @author yupi
- */
 public class CodeParserExecutor {
 
-    private static final HtmlCodeParser htmlCodeParser = new HtmlCodeParser();
+    private static final HtmlCodeParser HTML_CODE_PARSER = new HtmlCodeParser();
 
-    private static final MultiFileCodeParser multiFileCodeParser = new MultiFileCodeParser();
+    private static final MultiFileCodeParser MULTI_FILE_CODE_PARSER = new MultiFileCodeParser();
 
-    /**
-     * 执行代码解析
-     *
-     * @param codeContent     代码内容
-     * @param codeGenTypeEnum 代码生成类型
-     * @return 解析结果（HtmlCodeResult 或 MultiFileCodeResult）
-     */
+    private static final VueProjectCodeParser VUE_PROJECT_CODE_PARSER = new VueProjectCodeParser();
+
     public static Object executeParser(String codeContent, CodeGenTypeEnum codeGenTypeEnum) {
         return switch (codeGenTypeEnum) {
-            case HTML -> htmlCodeParser.parseCode(codeContent);
-            case MULTI_FILE -> multiFileCodeParser.parseCode(codeContent);
+            case HTML -> HTML_CODE_PARSER.parseCode(codeContent);
+            case MULTI_FILE -> MULTI_FILE_CODE_PARSER.parseCode(codeContent);
+            case VUE_PROJECT -> VUE_PROJECT_CODE_PARSER.parseCode(codeContent);
             default -> throw new BusinessException(ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
         };
     }

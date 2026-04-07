@@ -14,9 +14,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-/**
- * AI 服务创建工厂
- */
 @Configuration
 @Slf4j
 public class AiCodeGeneratorServiceFactory {
@@ -24,7 +21,7 @@ public class AiCodeGeneratorServiceFactory {
     @Resource
     private ChatModel chatModel;
 
-    @Resource
+    @Resource(name = "reasoningStreamingChatModel")
     private StreamingChatModel streamingChatModel;
 
     @Resource
@@ -33,48 +30,28 @@ public class AiCodeGeneratorServiceFactory {
     @Resource
     private ChatHistoryService chatHistoryService;
 
-    /**
-     * 根据 appId 获取服务（兼容调用，无 userId 时不预热记忆）
-     */
     public AiCodeGeneratorService getAiCodeGeneratorService(long appId) {
         return getAiCodeGeneratorService(appId, CodeGenTypeEnum.HTML, null);
     }
 
-    /**
-     * 根据 appId 和代码生成类型获取服务（无 userId 时不预热记忆）
-     */
     public AiCodeGeneratorService getAiCodeGeneratorService(long appId, CodeGenTypeEnum codeGenType) {
         return getAiCodeGeneratorService(appId, codeGenType, null);
     }
 
-    /**
-     * 根据 appId、代码生成类型和 userId 获取服务，自动预热 Redis 对话记忆
-     */
     public AiCodeGeneratorService getAiCodeGeneratorService(long appId, CodeGenTypeEnum codeGenType, Long userId) {
-        return createAiCodeGeneratorService(appId, codeGenType, userId);
-    }
-
-    /**
-     * 创建 AI 服务实例（基于 Redis 持久化对话记忆）
-     * 若 userId 不为空，则先从数据库加载历史消息预热 Redis 记忆，避免 TTL 过期后上下文丢失
-     */
-    private AiCodeGeneratorService createAiCodeGeneratorService(long appId, CodeGenTypeEnum codeGenType, Long userId) {
-        // 若 Redis 记忆已过期，从数据库恢复历史消息
         if (userId != null && appId > 0) {
             try {
                 int loaded = chatHistoryService.loadChatHistoryToMemory(appId, userId, 20);
-                log.info("预热对话记忆，appId: {}, userId: {}, 加载条数: {}", appId, userId, loaded);
+                log.info("预热对话记忆成功, appId: {}, userId: {}, loaded: {}", appId, userId, loaded);
             } catch (Exception e) {
-                log.warn("预热对话记忆失败，appId: {}, userId: {}, 原因: {}", appId, userId, e.getMessage());
+                log.warn("预热对话记忆失败, appId: {}, userId: {}, reason: {}", appId, userId, e.getMessage());
             }
         }
         return switch (codeGenType) {
-            case HTML, MULTI_FILE -> AiServices.builder(AiCodeGeneratorService.class)
+            case HTML, MULTI_FILE, VUE_PROJECT -> AiServices.builder(AiCodeGeneratorService.class)
                     .chatModel(chatModel)
                     .streamingChatModel(streamingChatModel)
-                    // 根据 memoryId 构造独立的对话记忆，持久化至 Redis
-                    .chatMemoryProvider(memoryId -> MessageWindowChatMemory
-                            .builder()
+                    .chatMemoryProvider(memoryId -> MessageWindowChatMemory.builder()
                             .id(memoryId)
                             .chatMemoryStore(redisChatMemoryStore)
                             .maxMessages(20)
@@ -85,9 +62,6 @@ public class AiCodeGeneratorServiceFactory {
         };
     }
 
-    /**
-     * 注册默认 AI 服务 Bean
-     */
     @Bean
     public AiCodeGeneratorService aiCodeGeneratorService() {
         return getAiCodeGeneratorService(0);
