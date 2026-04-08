@@ -214,6 +214,7 @@ const previewFrameRef = ref<HTMLIFrameElement | null>(null)
 const events = ref<TimelineEvent[]>([])
 const visualEditMode = ref(false)
 const selectedWallpaper = ref<'bg1' | 'bg2' | 'bg3'>('bg1')
+const previewVersion = ref(0)
 const activePhaseKey = ref<PhaseKey>('analysis')
 const phaseState = ref<Record<PhaseKey, PhaseStatus>>({
   analysis: 'pending',
@@ -261,7 +262,8 @@ const modalSelectedFileContent = computed(() => {
 const resolvedPreviewUrl = computed(() => {
   if (!projectSnapshot.value?.previewUrl) return ''
   const baseURL = (myAxios.defaults.baseURL || '') as string
-  return `${baseURL.replace(/\/api$/, '')}${projectSnapshot.value.previewUrl}`
+  const separator = projectSnapshot.value.previewUrl.includes('?') ? '&' : '?'
+  return `${baseURL.replace(/\/api$/, '')}${projectSnapshot.value.previewUrl}${separator}t=${previewVersion.value}`
 })
 const visibleEvents = computed(() =>
   events.value.filter(
@@ -437,6 +439,7 @@ async function refreshSnapshot() {
 
 function applySnapshot(snapshot: AppProjectSnapshotVO | null) {
   projectSnapshot.value = snapshot
+  previewVersion.value += 1
   const files = snapshot?.files || []
   if (!files.length) {
     selectedFilePath.value = ''
@@ -545,6 +548,10 @@ async function handleSend() {
 
   eventSource.onmessage = (event) => {
     const payload = JSON.parse(event.data) as AgentStreamEvent
+    if (payload.type === 'assistant') {
+      resolvePendingAssistant(payload.message || '我已经整理好这次的说明了。')
+      return
+    }
     if (payload.type === 'result') {
       applySnapshot(payload.data || null)
       resolvePendingAssistant(payload.message || '这轮结果已经准备好了，你可以查看右侧文件和预览。')

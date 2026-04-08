@@ -23,6 +23,7 @@ import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -102,7 +103,7 @@ public class AiCodeGeneratorFacade {
         AppProjectSnapshotVO snapshotVO = new AppProjectSnapshotVO();
         snapshotVO.setCodeGenType(codeGenType.getValue());
         snapshotVO.setRootDirName(rootDirName);
-        snapshotVO.setSummary(summary);
+        snapshotVO.setSummary(resolveSnapshotSummary(codeGenType, summary, files));
         snapshotVO.setFiles(files);
         snapshotVO.setEntryFilePath(resolveEntryFilePath(codeGenType, files));
         snapshotVO.setPreviewUrl(resolvePreviewUrl(codeGenType, projectDir, rootDirName));
@@ -167,6 +168,123 @@ public class AiCodeGeneratorFacade {
             log.warn("Check vue preview build output failed: {}", e.getMessage());
             return true;
         }
+    }
+
+    private String resolveSnapshotSummary(CodeGenTypeEnum codeGenType, String summary, List<AppProjectFileVO> files) {
+        if (StrUtil.isNotBlank(summary) && !"Current snapshot".equalsIgnoreCase(summary.trim())) {
+            return summary.trim();
+        }
+        return generateSummaryFromFiles(codeGenType, files);
+    }
+
+    private String generateSummaryFromFiles(CodeGenTypeEnum codeGenType, List<AppProjectFileVO> files) {
+        if (files == null || files.isEmpty()) {
+            return "当前项目文件已生成，但暂时还没有可用的结构摘要。";
+        }
+        return switch (codeGenType) {
+            case HTML -> buildHtmlSummary(files);
+            case MULTI_FILE -> buildMultiFileSummary(files);
+            case VUE_PROJECT -> buildVueSummary(files);
+        };
+    }
+
+    private String buildHtmlSummary(List<AppProjectFileVO> files) {
+        List<String> keyFiles = files.stream()
+                .map(AppProjectFileVO::getPath)
+                .filter(path -> StrUtil.equalsAny(path, "index.html", "style.css", "script.js"))
+                .toList();
+        if (!keyFiles.isEmpty()) {
+            return "当前是一个单页前端项目，主要文件包括 " + String.join("、", keyFiles) + "，可以直接围绕页面结构、样式和交互继续修改。";
+        }
+        return "当前是一个单页前端项目，页面代码已经生成完成，可以继续围绕结构、样式和交互做增量调整。";
+    }
+
+    private String buildMultiFileSummary(List<AppProjectFileVO> files) {
+        List<String> topFiles = files.stream()
+                .map(AppProjectFileVO::getPath)
+                .filter(path -> !path.contains("/"))
+                .limit(6)
+                .toList();
+        if (!topFiles.isEmpty()) {
+            return "当前是一个多文件前端项目，根目录下的关键文件有 " + String.join("、", topFiles) + "，适合继续按模块或页面逐步修改。";
+        }
+        return "当前是一个多文件前端项目，代码已经按文件拆分保存，可以继续针对具体页面或模块做调整。";
+    }
+
+    private String buildVueSummary(List<AppProjectFileVO> files) {
+        List<String> filePaths = files.stream().map(AppProjectFileVO::getPath).toList();
+        long viewCount = filePaths.stream()
+                .filter(path -> path.startsWith("src/views/") && path.endsWith(".vue"))
+                .count();
+        long componentCount = filePaths.stream()
+                .filter(path -> path.startsWith("src/components/") && path.endsWith(".vue"))
+                .count();
+        boolean hasRouter = filePaths.stream().anyMatch(path -> StrUtil.equalsAny(path, "src/router/index.ts", "src/router/index.js"));
+        List<String> routeFiles = filePaths.stream()
+                .filter(path -> path.startsWith("src/views/") && path.endsWith(".vue"))
+                .map(path -> StrUtil.removePrefix(path, "src/views/"))
+                .limit(4)
+                .toList();
+        List<String> highlights = new ArrayList<>();
+        highlights.add("这是一个 Vue3 + Vite 项目");
+        if (hasRouter) {
+            highlights.add("已经接入路由");
+        }
+        if (viewCount > 0) {
+            highlights.add("包含 " + viewCount + " 个页面视图");
+        }
+        if (componentCount > 0) {
+            highlights.add("包含 " + componentCount + " 个可复用组件");
+        }
+        StringBuilder summary = new StringBuilder(String.join("，", highlights)).append("。");
+        if (!routeFiles.isEmpty()) {
+            summary.append(" 当前可见的页面文件有 ").append(String.join("、", routeFiles)).append("。");
+        }
+        String appVueOutline = extractVueOutline(files, "src/App.vue");
+        if (StrUtil.isNotBlank(appVueOutline)) {
+            summary.append(" 应用外层结构大致是：").append(appVueOutline).append("。");
+        } else {
+            summary.append(" 你可以继续围绕页面布局、组件样式或交互流程做增量修改。");
+        }
+        return summary.toString();
+    }
+
+    private String extractVueOutline(List<AppProjectFileVO> files, String path) {
+        AppProjectFileVO appFile = files.stream()
+                .filter(file -> StrUtil.equals(file.getPath(), path))
+                .findFirst()
+                .orElse(null);
+        if (appFile == null || StrUtil.isBlank(appFile.getContent())) {
+            return null;
+        }
+        String template = extractBetween(appFile.getContent(), "<template>", "</template>");
+        if (StrUtil.isBlank(template)) {
+            return null;
+        }
+        String normalized = template
+                .replaceAll("(?s)<!--.*?-->", " ")
+                .replaceAll("(?s)<script.*?</script>", " ")
+                .replaceAll("(?s)<style.*?</style>", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (normalized.length() > 120) {
+            normalized = normalized.substring(0, 120) + "...";
+        }
+        normalized = normalized.replace("<", " <").trim();
+        return normalized;
+    }
+
+    private String extractBetween(String text, String start, String end) {
+        int startIndex = text.indexOf(start);
+        if (startIndex < 0) {
+            return null;
+        }
+        startIndex += start.length();
+        int endIndex = text.indexOf(end, startIndex);
+        if (endIndex < 0) {
+            return null;
+        }
+        return text.substring(startIndex, endIndex).trim();
     }
 
     private Flux<AgentStreamEvent> processCodeStream(Flux<String> codeStream,

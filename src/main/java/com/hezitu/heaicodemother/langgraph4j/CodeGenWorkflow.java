@@ -45,7 +45,6 @@ public class CodeGenWorkflow {
                                                         CodeGenTypeEnum preferredGenerationType) {
         return Flux.create(sink -> Thread.startVirtualThread(() -> {
             try {
-                sink.next(AgentStreamEvent.assistant("我先看看你的需求，并结合当前工程准备一个合适的实现方案。"));
                 CompiledGraph<MessagesState<String>> workflow = createWorkflow();
                 WorkflowContext initialContext = WorkflowContext.builder()
                         .appId(appId)
@@ -61,15 +60,14 @@ public class CodeGenWorkflow {
                     WorkflowContext currentContext = WorkflowContext.getContext(step.state());
                     if (currentContext != null) {
                         lastContext = currentContext;
-                        String assistantMessage = describeStep(currentContext.getCurrentStep());
-                        if (assistantMessage != null) {
-                            sink.next(AgentStreamEvent.assistant(assistantMessage));
+                        String statusMessage = describeStep(currentContext.getCurrentStep());
+                        if (statusMessage != null) {
+                            sink.next(AgentStreamEvent.status(statusMessage));
                         }
                     }
                 }
                 AppProjectSnapshotVO snapshot = aiCodeGeneratorFacade.buildProjectSnapshot(
                         lastContext.getGenerationType(), appId, "Workflow completed");
-                sink.next(AgentStreamEvent.assistant("这轮修改已经完成，我把最新工程和预览结果同步给你。"));
                 sink.next(AgentStreamEvent.result("工程结果已准备完成，你可以查看右侧文件和预览。", snapshot));
                 sink.next(AgentStreamEvent.done());
                 sink.complete();
@@ -113,14 +111,14 @@ public class CodeGenWorkflow {
 
     private String describeStep(String step) {
         if (step == null || step.isBlank()) {
-            return "我正在继续处理这次修改。";
+            return null;
         }
         return switch (step) {
-            case "image_collection" -> "我先补充一些页面所需的素材和上下文，让后续生成更稳定。";
-            case "prompt_enhancement" -> "我在整理需求细节，准备把它转换成更适合生成的描述。";
-            case "routing" -> "我在判断这次任务更适合用哪一种项目结构来实现。";
-            case "code_generation" -> "我已经开始生成代码了，马上把结果整理出来。";
-            case "project_build" -> "我在构建预览环境，这样你可以直接看到页面效果。";
+            case "image_collection" -> "workflow:image_collection";
+            case "prompt_enhancement" -> "workflow:prompt_enhancement";
+            case "routing" -> "workflow:routing";
+            case "code_generation" -> "workflow:code_generation";
+            case "project_build" -> "workflow:project_build";
             default -> null;
         };
     }

@@ -38,12 +38,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -172,26 +175,29 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
     }
 
     private Flux<AgentStreamEvent> replyToCustomer(App app, String userMessage, User loginUser) {
-        return Flux.create(sink -> {
-            try {
-                String prompt = buildCustomerReplyPrompt(app, userMessage, loginUser.getId());
-                String reply = customerSupportService.reply(prompt);
-                String finalReply = StrUtil.blankToDefault(reply, "我先回答你这个问题。如果你希望我直接改页面，也可以继续告诉我具体要怎么改。");
-                chatHistoryService.addChatMessage(app.getId(), finalReply,
-                        ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
-                sink.next(AgentStreamEvent.assistant(finalReply));
-                sink.next(AgentStreamEvent.done());
-                sink.complete();
-            } catch (Exception e) {
-                log.error("Customer reply failed, appId: {}, error: {}", app.getId(), e.getMessage(), e);
-                String fallbackReply = buildFallbackCustomerReply(app, userMessage);
-                chatHistoryService.addChatMessage(app.getId(), fallbackReply,
-                        ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
-                sink.next(AgentStreamEvent.assistant(fallbackReply));
-                sink.next(AgentStreamEvent.done());
-                sink.complete();
-            }
-        });
+        return Mono.fromCallable(() -> {
+                    String prompt = buildCustomerReplyPrompt(app, userMessage, loginUser.getId());
+                    String reply = customerSupportService.reply(prompt);
+                    return StrUtil.blankToDefault(reply, "我先回答你这个问题。如果你希望我直接改页面，也可以继续告诉我具体要怎么改。");
+                })
+                .subscribeOn(Schedulers.boundedElastic())
+                .timeout(Duration.ofSeconds(25))
+                .map(finalReply -> {
+                    chatHistoryService.addChatMessage(app.getId(), finalReply,
+                            ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
+                    return finalReply;
+                })
+                .onErrorResume(e -> {
+                    log.error("Customer reply failed, appId: {}, error: {}", app.getId(), e.getMessage(), e);
+                    String fallbackReply = buildFallbackCustomerReply(app, userMessage);
+                    chatHistoryService.addChatMessage(app.getId(), fallbackReply,
+                            ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
+                    return Mono.just(fallbackReply);
+                })
+                .flatMapMany(finalReply -> Flux.just(
+                        AgentStreamEvent.assistant(finalReply),
+                        AgentStreamEvent.done()
+                ));
     }
 
     private String buildFallbackCustomerReply(App app, String userMessage) {
@@ -218,7 +224,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
     private String buildCustomerReplyPrompt(App app, String userMessage, Long userId) {
         StringBuilder promptBuilder = new StringBuilder();
         promptBuilder.append("应用名称: ").append(StrUtil.blankToDefault(app.getAppName(), "未命名应用")).append("\n");
-        promptBuilder.append("当前项目类型: ").append(StrUtil.blankToDefault(app.getCodeGenType(), "unknown")).append("\n\n");
+        promptBuilder.append("项目类型: ").append(StrUtil.blankToDefault(app.getCodeGenType(), "unknown")).append("\n");
         AppProjectSnapshotVO snapshotVO = null;
         try {
             CodeGenTypeEnum codeGenTypeEnum = CodeGenTypeEnum.getEnumByValue(app.getCodeGenType());
@@ -229,29 +235,50 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
             log.warn("Build snapshot for customer reply failed: {}", e.getMessage());
         }
         if (snapshotVO != null) {
-            promptBuilder.append("当前项目摘要: ")
+            promptBuilder.append("项目摘要: ")
                     .append(StrUtil.blankToDefault(snapshotVO.getSummary(), "暂无摘要"))
                     .append("\n");
-            List<AppProjectFileVO> files = snapshotVO.getFiles();
-            if (CollUtil.isNotEmpty(files)) {
-                promptBuilder.append("当前文件列表:\n");
-                files.stream()
-                        .limit(12)
-                        .forEach(file -> promptBuilder.append("- ").append(file.getPath()).append("\n"));
-            }
+            appendKeyFiles(promptBuilder, snapshotVO.getFiles());
             promptBuilder.append("\n");
         }
-        List<ChatHistory> historyList = chatHistoryService.listChatHistory(app.getId(), null, 6);
+        List<ChatHistory> historyList = chatHistoryService.listChatHistory(app.getId(), null, 4);
         if (CollUtil.isNotEmpty(historyList)) {
-            promptBuilder.append("最近对话记录:\n");
+            promptBuilder.append("最近对话摘要:\n");
             historyList.forEach(history -> promptBuilder.append(history.getMessageType())
                     .append(": ")
-                    .append(history.getMessage())
+                    .append(StrUtil.maxLength(StrUtil.blankToDefault(history.getMessage(), ""), 160))
                     .append("\n"));
             promptBuilder.append("\n");
         }
-        promptBuilder.append("客户当前问题:\n").append(userMessage);
+        promptBuilder.append("客户当前问题:\n").append(userMessage).append("\n\n");
+        promptBuilder.append("回答要求:\n");
+        promptBuilder.append("1. 直接评价或解释，不要复述上下文。\n");
+        promptBuilder.append("2. 优先说优点、问题和可改进点。\n");
+        promptBuilder.append("3. 控制在 3 到 6 句，语言自然。\n");
         return promptBuilder.toString();
+    }
+
+    private void appendKeyFiles(StringBuilder promptBuilder, List<AppProjectFileVO> files) {
+        if (CollUtil.isEmpty(files)) {
+            return;
+        }
+        List<String> keyPaths = files.stream()
+                .map(AppProjectFileVO::getPath)
+                .filter(path -> StrUtil.equalsAny(path,
+                                "src/App.vue",
+                                "src/main.ts",
+                                "src/main.js",
+                                "src/router/index.ts",
+                                "src/router/index.js",
+                                "index.html")
+                        || path.startsWith("src/views/")
+                        || path.startsWith("src/components/"))
+                .limit(8)
+                .toList();
+        if (CollUtil.isNotEmpty(keyPaths)) {
+            promptBuilder.append("关键文件:\n");
+            keyPaths.forEach(path -> promptBuilder.append("- ").append(path).append("\n"));
+        }
     }
 
     @Override

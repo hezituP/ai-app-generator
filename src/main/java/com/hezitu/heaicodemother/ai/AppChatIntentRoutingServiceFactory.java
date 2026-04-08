@@ -9,13 +9,13 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class AppChatIntentRoutingServiceFactory {
 
-    @Resource
-    private ChatModel chatModel;
+    @Resource(name = "customerSupportChatModel")
+    private ChatModel customerSupportChatModel;
 
     @Bean
     public AppChatIntentRoutingService appChatIntentRoutingService() {
         return AiServices.builder(AppChatIntentRoutingService.class)
-                .chatModel(chatModel)
+                .chatModel(customerSupportChatModel)
                 .build();
     }
 }
