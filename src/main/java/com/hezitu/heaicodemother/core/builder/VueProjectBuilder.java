@@ -60,7 +60,17 @@ public class VueProjectBuilder {
 
     private boolean executeNpmBuild(File projectDir) {
         log.info("执行 npm run build...");
-        return executeCommand(projectDir, NPM_BUILD_TIMEOUT_SECONDS, getNpmCommand(), "run", "build");
+        if (executeCommand(projectDir, NPM_BUILD_TIMEOUT_SECONDS, getNpmCommand(), "run", "build", "--", "--base=./")) {
+            return true;
+        }
+        log.warn("npm run build 失败，尝试跳过 vue-tsc，直接使用 vite 构建预览产物");
+        return executeViteBuildFallback(projectDir);
+    }
+
+    private boolean executeViteBuildFallback(File projectDir) {
+        String npmCommand = getNpmCommand();
+        return executeCommand(projectDir, NPM_BUILD_TIMEOUT_SECONDS, npmCommand, "exec", "--", "vite", "build", "--base=./")
+                || executeCommand(projectDir, NPM_BUILD_TIMEOUT_SECONDS, npmCommand, "exec", "vite", "build", "--base=./");
     }
 
     private boolean executeCommand(File workingDir, int timeoutSeconds, String... commandParts) {

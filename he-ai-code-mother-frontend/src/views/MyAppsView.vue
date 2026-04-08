@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="my-apps-page" :style="pageStyle">
     <div class="page-header">
       <div>
@@ -10,7 +10,7 @@
       </a-button>
     </div>
 
-    <div class="apps-grid" v-if="apps.length">
+    <div v-if="apps.length" class="apps-grid">
       <article v-for="app in apps" :key="app.id" class="app-card">
         <div class="card-top" @click="goToEditor(app)">
           <div class="cover" v-if="app.cover">
@@ -19,6 +19,7 @@
           <div v-else class="cover placeholder">{{ app.appName?.slice(0, 1) || 'A' }}</div>
           <span class="type-badge">{{ formatCodeGenType(app.codeGenType) }}</span>
         </div>
+
         <div class="card-body">
           <div class="title-row">
             <h3>{{ app.appName }}</h3>
@@ -81,7 +82,11 @@
           name="initPrompt"
           :rules="[{ required: true, message: '请输入需求描述' }]"
         >
-          <a-textarea v-model:value="createForm.initPrompt" :rows="4" placeholder="描述你希望平台生成的站点、页面和功能" />
+          <a-textarea
+            v-model:value="createForm.initPrompt"
+            :rows="4"
+            placeholder="描述你希望平台生成的站点、页面和功能"
+          />
         </a-form-item>
         <div class="modal-actions">
           <a-button @click="showCreateModal = false">取消</a-button>
@@ -128,7 +133,6 @@ import {
 
 const router = useRouter()
 const apps = ref<AppVO[]>([])
-const loading = ref(false)
 const pageNum = ref(1)
 const pageSize = 12
 const total = ref(0)
@@ -167,27 +171,25 @@ const renameForm = reactive({
 })
 
 async function fetchMyApps() {
-  loading.value = true
-  try {
-    const res = await listMyAppVOByPageApi({ pageNum: pageNum.value, pageSize })
-    if (res.data.code === 0) {
-      apps.value = res.data.data?.records || []
-      total.value = res.data.data?.total || 0
-    }
-  } finally {
-    loading.value = false
+  const res = await listMyAppVOByPageApi({ pageNum: pageNum.value, pageSize })
+  if (res.data.code === 0) {
+    apps.value = res.data.data?.records || []
+    total.value = res.data.data?.total || 0
   }
 }
 
 async function handleCreate() {
   creating.value = true
   try {
+    const prompt = createForm.initPrompt.trim()
+    window.localStorage.setItem('pendingAppPrompt', prompt)
     const res = await addAppApi(createForm)
     if (res.data.code === 0) {
       showCreateModal.value = false
       message.success('应用创建成功')
+      const appId = res.data.data
       Object.assign(createForm, { appName: '', codeGenType: 'vue_project', initPrompt: '' })
-      await router.push(`/app/${res.data.data}`)
+      await router.push(`/app/${appId}?prompt=${encodeURIComponent(prompt)}`)
     } else {
       message.error(res.data.message || '创建失败')
     }
@@ -265,10 +267,10 @@ async function handleDownload(app: AppVO) {
     const res = await downloadAppCodeApi(app.id)
     const blob = new Blob([res.data])
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${app.appName}.zip`
-    a.click()
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `${app.appName || 'app'}.zip`
+    anchor.click()
     URL.revokeObjectURL(url)
   } catch {
     message.error('下载失败')
@@ -276,11 +278,15 @@ async function handleDownload(app: AppVO) {
 }
 
 function goToEditor(app: AppVO) {
-  router.push(`/app/${app.id}`)
+  router.push(`/app/${app.id}?prompt=${encodeURIComponent(app.initPrompt || '')}`)
 }
 
-function formatCodeGenType(codeGenType: string) {
-  return codeGenTypes.find((item) => item.value === codeGenType)?.label || codeGenType
+function formatCodeGenType(type: string) {
+  return ({
+    html: 'HTML 单页',
+    multi_file: '多文件站点',
+    vue_project: 'Vue3 + Vite 工程',
+  } as Record<string, string>)[type] || type
 }
 
 onMounted(() => {
@@ -295,75 +301,46 @@ onMounted(() => {
 <style scoped>
 .my-apps-page {
   min-height: 100vh;
-  padding: 92px 28px 36px;
+  padding: 92px 24px 40px;
   background:
-    linear-gradient(rgba(255, 248, 252, 0.46), rgba(243, 246, 255, 0.58)),
+    linear-gradient(rgba(247, 244, 255, 0.34), rgba(238, 245, 255, 0.42)),
     var(--my-apps-bg-image, none),
-    linear-gradient(135deg, #f5e7ff 0%, #ffe7ef 34%, #fff2dd 68%, #edf6ff 100%);
+    linear-gradient(135deg, #f8f0ff 0%, #fff0f5 38%, #eef7ff 100%);
   background-size: cover, cover, auto;
-  background-position: center center, center center, 0 0;
-  background-repeat: no-repeat, no-repeat, no-repeat;
-}
-
-.my-apps-page::before,
-.my-apps-page::after {
-  content: '';
-  position: fixed;
-  border-radius: 50%;
-  pointer-events: none;
-  filter: blur(18px);
-  z-index: 0;
-}
-
-.my-apps-page::before {
-  top: 90px;
-  left: -80px;
-  width: 260px;
-  height: 260px;
-  background: radial-gradient(circle, rgba(162, 155, 254, 0.28), transparent 70%);
-}
-
-.my-apps-page::after {
-  right: -60px;
-  bottom: 120px;
-  width: 300px;
-  height: 300px;
-  background: radial-gradient(circle, rgba(72, 219, 251, 0.24), transparent 72%);
+  background-position: center top, center top, center;
 }
 
 .page-header,
 .apps-grid,
 .empty,
 .pagination-wrap {
-  position: relative;
-  z-index: 1;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
 .page-header {
-  max-width: 1200px;
-  margin: 0 auto 26px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
+  margin-bottom: 24px;
 }
 
 .page-header h1 {
   margin: 0;
-  font-size: 34px;
-  letter-spacing: -0.04em;
-  background: linear-gradient(135deg, #fd79a8 0%, #a29bfe 55%, #48dbfb 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: #f5fbff;
+  font-size: 36px;
+  text-shadow: 0 4px 18px rgba(66, 101, 158, 0.15);
 }
 
 .page-header p {
   margin: 8px 0 0;
-  color: #726788;
+  color: #43597f;
 }
 
 .create-btn {
+  height: 44px;
+  padding: 0 20px;
   border: none;
   border-radius: 999px;
   background: linear-gradient(135deg, #fd79a8, #a29bfe);
@@ -371,8 +348,6 @@ onMounted(() => {
 }
 
 .apps-grid {
-  max-width: 1200px;
-  margin: 0 auto;
   display: grid;
   gap: 20px;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -385,7 +360,6 @@ onMounted(() => {
   border: 1px solid rgba(255, 255, 255, 0.56);
   box-shadow: 0 24px 50px rgba(130, 112, 162, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.52);
   backdrop-filter: blur(18px);
-  animation: cardEnter 0.45s cubic-bezier(0.34, 1.2, 0.64, 1) both;
   transition: transform 0.24s ease, box-shadow 0.24s ease;
 }
 
@@ -407,11 +381,6 @@ onMounted(() => {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 0.4s ease;
-}
-
-.app-card:hover .cover img {
-  transform: scale(1.06);
 }
 
 .placeholder {
@@ -469,12 +438,6 @@ onMounted(() => {
   border-radius: 999px;
 }
 
-.empty,
-.pagination-wrap {
-  max-width: 1200px;
-  margin: 0 auto;
-}
-
 .type-grid {
   display: grid;
   gap: 12px;
@@ -491,7 +454,6 @@ onMounted(() => {
   gap: 6px;
   color: #463e61;
   box-shadow: 9px 9px 18px rgba(208, 203, 223, 0.55), -9px -9px 18px rgba(255, 255, 255, 0.96);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .type-card.active {
@@ -532,15 +494,14 @@ onMounted(() => {
   box-shadow: inset 8px 8px 16px rgba(210, 206, 223, 0.62), inset -8px -8px 16px rgba(255, 255, 255, 0.96) !important;
 }
 
-@keyframes cardEnter {
-  from {
-    opacity: 0;
-    transform: translateY(18px) scale(0.97);
+@media (max-width: 768px) {
+  .my-apps-page {
+    padding: 82px 16px 32px;
   }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
+
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
-
 </style>

@@ -1,34 +1,23 @@
 <template>
   <header class="app-header">
     <div class="header-inner">
-      <router-link to="/" class="logo">
-        <div class="logo-mark">
-          <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
-            <rect width="26" height="26" rx="7" fill="url(#lg)"/>
-            <path d="M7 13l4.5 4.5L19 8" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-            <defs><linearGradient id="lg" x1="0" y1="0" x2="26" y2="26"><stop offset="0%" stop-color="#84fab0"/><stop offset="100%" stop-color="#3ab0a0"/></linearGradient></defs>
-          </svg>
-        </div>
-        <span class="logo-text">He<span class="gradient-text">AI</span></span>
-      </router-link>
-
       <nav class="nav-links">
         <router-link to="/" class="nav-link" :class="{ active: $route.path === '/' }">
           <HomeOutlined /> 精选应用
         </router-link>
         <router-link
+          v-if="userStore.loginUser"
           to="/my-apps"
           class="nav-link"
           :class="{ active: $route.path === '/my-apps' }"
-          v-if="userStore.loginUser"
         >
           <AppstoreOutlined /> 我的应用
         </router-link>
         <router-link
+          v-if="userStore.isAdmin()"
           to="/admin/apps"
           class="nav-link nav-link-admin"
           :class="{ active: $route.path.startsWith('/admin') }"
-          v-if="userStore.isAdmin()"
         >
           <SettingOutlined /> 应用管理
         </router-link>
@@ -37,17 +26,22 @@
       <div class="header-right">
         <template v-if="userStore.loginUser">
           <a-dropdown placement="bottomRight">
-            <div class="user-pill">
+            <button class="user-pill" type="button">
               <a-avatar
-                :size="28"
+                :size="30"
                 :src="userStore.loginUser.userAvatar"
-                :style="{ background: 'linear-gradient(135deg,#84fab0,#3ab0a0)', fontSize: '12px', fontWeight: '700' }"
-              >{{ userStore.loginUser.userName?.charAt(0) || 'U' }}</a-avatar>
+                :style="avatarStyle"
+              >
+                {{ userStore.loginUser.userName?.charAt(0) || 'U' }}
+              </a-avatar>
               <span class="user-name">{{ userStore.loginUser.userName || '用户' }}</span>
-              <DownOutlined style="font-size:10px;opacity:0.5" />
-            </div>
+              <DownOutlined class="down-icon" />
+            </button>
             <template #overlay>
               <a-menu class="light-dropdown">
+                <a-menu-item key="rename" @click="openRenameModal">
+                  <EditOutlined /> 修改用户名
+                </a-menu-item>
                 <a-menu-item key="logout" @click="handleLogout">
                   <LogoutOutlined /> 退出登录
                 </a-menu-item>
@@ -61,24 +55,76 @@
         </template>
       </div>
     </div>
+
+    <a-modal v-model:open="renameModalOpen" title="修改用户名" :footer="null" width="420px">
+      <a-form layout="vertical" @finish="handleRenameSubmit">
+        <a-form-item label="新的用户名" :rules="[{ required: true, message: '请输入用户名' }]">
+          <a-input v-model:value="renameValue" :maxlength="20" placeholder="请输入新的用户名" />
+        </a-form-item>
+        <div class="modal-actions">
+          <a-button @click="renameModalOpen = false">取消</a-button>
+          <a-button type="primary" html-type="submit" :loading="renaming">保存</a-button>
+        </div>
+      </a-form>
+    </a-modal>
   </header>
 </template>
 
 <script setup lang="ts">
-import { useUserStore } from '@/stores/userStore'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { userLogoutApi } from '@/api/user'
 import {
-  HomeOutlined,
   AppstoreOutlined,
-  SettingOutlined,
-  LogoutOutlined,
   DownOutlined,
+  EditOutlined,
+  HomeOutlined,
+  LogoutOutlined,
+  SettingOutlined,
 } from '@ant-design/icons-vue'
+import { updateMyUserApi, userLogoutApi } from '@/api/user'
+import { useUserStore } from '@/stores/userStore'
 
-const userStore = useUserStore()
 const router = useRouter()
+const userStore = useUserStore()
+const renameModalOpen = ref(false)
+const renameValue = ref('')
+const renaming = ref(false)
+
+const avatarStyle = computed(() => ({
+  background: 'linear-gradient(135deg, rgba(114, 182, 255, 0.9), rgba(198, 228, 255, 0.9))',
+  color: '#1d4674',
+  fontSize: '12px',
+  fontWeight: '700',
+}))
+
+function openRenameModal() {
+  renameValue.value = userStore.loginUser?.userName || ''
+  renameModalOpen.value = true
+}
+
+async function handleRenameSubmit() {
+  const userName = renameValue.value.trim()
+  if (!userName) {
+    message.warning('请输入用户名')
+    return
+  }
+  renaming.value = true
+  try {
+    const res = await updateMyUserApi({ userName })
+    if (res.data.code === 0) {
+      userStore.setLoginUser(res.data.data)
+      renameModalOpen.value = false
+      message.success('用户名已更新')
+    } else {
+      message.error(res.data.message || '修改失败')
+    }
+  } catch {
+    message.error('网络异常')
+  } finally {
+    renaming.value = false
+  }
+}
 
 async function handleLogout() {
   await userLogoutApi()
@@ -96,166 +142,133 @@ async function handleLogout() {
   right: 0;
   z-index: 1000;
   height: 58px;
-  background: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.18);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(99, 102, 241, 0.1);
-  box-shadow: 0 1px 0 rgba(99, 102, 241, 0.06), 0 4px 16px rgba(99, 102, 241, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 6px 28px rgba(39, 59, 94, 0.08);
 }
 
 .header-inner {
   max-width: 1240px;
-  margin: 0 auto;
   height: 100%;
-  padding: 0 28px;
+  margin: 0 auto;
+  padding: 0 26px;
   display: flex;
   align-items: center;
-  gap: 28px;
-}
-
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  text-decoration: none;
-  flex-shrink: 0;
-}
-
-.logo-mark {
-  display: flex;
-  filter: drop-shadow(0 2px 6px rgba(58, 176, 160, 0.3));
-}
-
-.logo-text {
-  font-size: 19px;
-  font-weight: 800;
-  color: #1e1b4b;
-  letter-spacing: -0.5px;
-}
-
-.gradient-text {
-  background: linear-gradient(135deg, #4f46e5, #0ea5e9);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  justify-content: space-between;
+  gap: 18px;
 }
 
 .nav-links {
   display: flex;
   align-items: center;
-  gap: 2px;
-  flex: 1;
+  gap: 8px;
 }
 
 .nav-link {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 13px;
-  border-radius: 8px;
-  color: #6b7280;
-  font-size: 14px;
-  font-weight: 500;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  color: #45638f;
   text-decoration: none;
-  transition: all 0.18s;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid transparent;
+  transition: all 0.22s ease;
 }
 
-.nav-link:hover {
-  color: #4f46e5;
-  background: rgba(99, 102, 241, 0.07);
-}
-
+.nav-link:hover,
 .nav-link.active {
-  color: #4f46e5;
-  background: rgba(99, 102, 241, 0.1);
-  font-weight: 600;
+  color: #244a7a;
+  background: rgba(255, 255, 255, 0.28);
+  border-color: rgba(255, 255, 255, 0.36);
 }
 
 .nav-link-admin {
-  color: #d97706;
-}
-
-.nav-link-admin:hover {
-  color: #b45309;
-  background: rgba(217, 119, 6, 0.07);
-}
-
-.nav-link-admin.active {
-  color: #b45309;
-  background: rgba(217, 119, 6, 0.1);
+  color: #7b4b24;
 }
 
 .header-right {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-left: auto;
+  gap: 10px;
 }
 
 .user-pill {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 3px 11px 3px 4px;
-  border-radius: 40px;
-  background: #f5f3ff;
-  border: 1px solid rgba(99, 102, 241, 0.18);
+  gap: 9px;
+  padding: 4px 12px 4px 4px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.22);
+  color: #2e4a76;
   cursor: pointer;
-  transition: all 0.18s;
-}
-
-.user-pill:hover {
-  background: #ede9fe;
-  border-color: rgba(99, 102, 241, 0.35);
 }
 
 .user-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1a5a3a;
-  max-width: 90px;
+  max-width: 96px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 600;
+}
+
+.down-icon {
+  font-size: 10px;
+  opacity: 0.6;
+}
+
+.btn-ghost,
+.btn-reg {
+  height: 36px !important;
+  border-radius: 999px !important;
 }
 
 .btn-ghost {
-  background: transparent !important;
-  border: 1px solid rgba(99, 102, 241, 0.25) !important;
-  color: #4f46e5 !important;
-  border-radius: 8px !important;
-  font-weight: 600 !important;
-  height: 34px !important;
+  background: rgba(255, 255, 255, 0.18) !important;
+  border: 1px solid rgba(255, 255, 255, 0.4) !important;
+  color: #345684 !important;
 }
 
-.btn-ghost:hover {
-  background: rgba(99, 102, 241, 0.06) !important;
-  border-color: #4f46e5 !important;
-}
-
-.btn-reg {
-  border-radius: 8px !important;
-  font-weight: 600 !important;
-  height: 34px !important;
-}
-
-:deep(.light-dropdown) {
-  background: white !important;
-  border: 1px solid rgba(99, 102, 241, 0.12) !important;
-  border-radius: 10px !important;
-  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.12) !important;
-}
-
-:deep(.light-dropdown .ant-menu-item) {
-  color: #1a3a2a !important;
-  font-size: 14px;
+.modal-actions {
   display: flex;
-  align-items: center;
+  justify-content: flex-end;
   gap: 8px;
 }
 
-:deep(.light-dropdown .ant-menu-item:hover) {
-  background: #f5f3ff !important;
-  color: #4f46e5 !important;
+:deep(.light-dropdown) {
+  border-radius: 16px !important;
+  background: rgba(255, 255, 255, 0.88) !important;
+  border: 1px solid rgba(255, 255, 255, 0.6) !important;
+  box-shadow: 0 18px 40px rgba(35, 54, 89, 0.12) !important;
+  backdrop-filter: blur(16px);
+}
+
+:deep(.light-dropdown .ant-menu-item) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #35527d !important;
+}
+
+:deep(.ant-modal-content) {
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 24px 50px rgba(40, 58, 89, 0.14);
+  backdrop-filter: blur(18px);
+}
+
+:deep(.ant-modal-header) {
+  background: transparent;
+}
+
+:deep(.ant-input) {
+  border-radius: 16px !important;
+  border: 1px solid rgba(255, 255, 255, 0.38) !important;
+  background: rgba(255, 255, 255, 0.3) !important;
 }
 </style>

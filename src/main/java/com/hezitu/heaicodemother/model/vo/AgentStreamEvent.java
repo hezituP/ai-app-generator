@@ -21,6 +21,14 @@ public class AgentStreamEvent implements Serializable {
         return new AgentStreamEvent("status", message, null);
     }
 
+    public static AgentStreamEvent assistant(String message) {
+        return new AgentStreamEvent("assistant", message, null);
+    }
+
+    public static AgentStreamEvent assistantDelta(String message) {
+        return new AgentStreamEvent("assistant_delta", message, null);
+    }
+
     public static AgentStreamEvent result(String message, Object data) {
         return new AgentStreamEvent("result", message, data);
     }

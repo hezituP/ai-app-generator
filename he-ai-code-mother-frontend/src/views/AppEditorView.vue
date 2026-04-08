@@ -1,5 +1,5 @@
-﻿<template>
-  <div class="editor-page">
+<template>
+  <div class="editor-page" :style="pageStyle">
     <header class="page-header">
       <div>
         <router-link to="/my-apps" class="back-link">返回应用列表</router-link>
@@ -15,35 +15,78 @@
     </header>
 
     <main class="editor-layout">
-      <section class="agent-panel">
+      <section class="agent-panel glass-panel">
         <div class="panel-head">
           <div class="panel-title">Agent 协作区</div>
-          <p>在这里继续描述修改需求，生成过程会按时间顺序返回。</p>
         </div>
-        <div class="event-list" ref="messagesRef">
-          <div v-if="events.length === 0" class="empty-block">
-            <h3>开始一次工程化生成</h3>
-            <p>描述页面结构、风格、路由和交互需求，Agent 会以流式方式生成完整工程。</p>
+
+        <a-alert
+          v-if="selectedElement"
+          class="selection-alert"
+          type="info"
+          show-icon
+          closable
+          @close="handleClearSelectedElement"
+        >
+          <template #message>
+            已选中元素：{{ selectedElement.tagName }} · {{ selectedElement.selector || '未识别选择器' }}
+          </template>
+          <template #description>
+            {{ selectedElement.text || '该元素暂无可提取文本' }}
+          </template>
+        </a-alert>
+
+        <div class="stream-panels unified-stream" ref="messagesRef">
+          <div v-if="!events.length" class="compact-empty">
+            <p>这里会显示你和 AI 的对话，以及本轮生成过程中的关键回复。</p>
           </div>
-          <div v-for="item in events" :key="item.id" class="event-item" :class="item.type">
-            <strong>{{ item.title }}</strong>
-            <p>{{ item.message }}</p>
+          <div v-else class="message-list">
+            <article
+              v-for="item in visibleEvents"
+              :key="item.id"
+              class="message-card"
+              :class="[item.role, { pending: item.pending }]"
+            >
+              <div class="message-meta">
+                <span class="message-role">{{ item.roleLabel }}</span>
+                <span class="message-time">{{ item.time }}</span>
+              </div>
+              <div v-if="item.pending" class="message-loading">
+                <span class="loading-dot"></span>
+                <span class="loading-dot"></span>
+                <span class="loading-dot"></span>
+              </div>
+              <p class="message-text">{{ item.message }}</p>
+            </article>
           </div>
         </div>
+
         <a-textarea
           v-model:value="inputMsg"
           :rows="4"
           :disabled="streaming"
-          placeholder="例如：生成一个 SaaS 官网，包含首页、价格页、案例页、联系我们表单，并使用清爽的蓝绿色视觉风格"
-          @keydown.ctrl.enter.prevent="handleSend"
+          class="chat-input"
+          placeholder="例如：保留首页布局，把首屏标题改得更轻柔，并让按钮层级更突出"
+          @keydown.enter.exact.prevent="handleSend"
         />
+
         <div class="panel-actions">
-          <span>Ctrl + Enter 发送</span>
-          <a-button type="primary" :loading="streaming" @click="handleSend">发送给 Agent</a-button>
+          <span class="shortcut-tip">Enter 发送，Shift + Enter 换行</span>
+          <div class="action-buttons">
+            <a-button
+              class="visual-btn"
+              :type="visualEditMode ? 'primary' : 'default'"
+              :disabled="!projectSnapshot?.previewUrl || streaming"
+              @click="toggleVisualEditMode"
+            >
+              {{ visualEditMode ? '退出编辑模式' : '进入编辑模式' }}
+            </a-button>
+            <a-button type="primary" :loading="streaming" @click="handleSend">发送给 Agent</a-button>
+          </div>
         </div>
       </section>
 
-      <section class="workspace-panel">
+      <section class="workspace-panel glass-panel">
         <div class="workspace-header">
           <div class="tabs">
             <button :class="{ active: activeTab === 'project' }" @click="activeTab = 'project'">工程文件</button>
@@ -59,13 +102,20 @@
               <p>{{ projectSnapshot?.summary || '生成完成后会展示工程摘要' }}</p>
             </div>
             <button
-              v-for="file in projectFiles"
+              v-for="file in visibleProjectFiles"
               :key="file.path"
               class="file-item"
               :class="{ active: selectedFilePath === file.path }"
               @click="selectedFilePath = file.path"
             >
               {{ file.path }}
+            </button>
+            <button
+              v-if="hiddenFrontendFiles.length"
+              class="file-item more-file-item"
+              @click="openFullCodeModal"
+            >
+              ... 还有 {{ hiddenFrontendFiles.length }} 个文件
             </button>
           </aside>
 
@@ -77,15 +127,40 @@
 
         <div v-else class="preview-panel">
           <div v-if="projectSnapshot?.previewUrl" class="iframe-wrap">
-            <iframe :src="resolvedPreviewUrl" title="preview"></iframe>
+            <iframe ref="previewFrameRef" :src="resolvedPreviewUrl" title="preview" />
           </div>
           <div v-else class="empty-block preview-empty">
-            <h3>当前模式不提供直接静态预览</h3>
-            <p>Vue3 + Vite 工程已经生成完成，你可以在右侧文件区查看全部源码，或直接下载整个工程。</p>
+            <h3>当前还没有可用预览</h3>
+            <p>先让 Agent 生成一轮工程，或刷新快照等待静态预览构建完成。</p>
           </div>
         </div>
       </section>
     </main>
+
+    <a-modal v-model:open="fullCodeModalOpen" :footer="null" width="1120px" class="glass-code-modal">
+      <div class="full-code-modal">
+        <aside class="modal-file-tree">
+          <div class="modal-title-row">
+            <strong>完整前端代码</strong>
+            <span>{{ frontendProjectFiles.length }} 个文件</span>
+          </div>
+          <button
+            v-for="file in frontendProjectFiles"
+            :key="file.path"
+            class="file-item"
+            :class="{ active: modalSelectedFilePath === file.path }"
+            @click="modalSelectedFilePath = file.path"
+          >
+            {{ file.path }}
+          </button>
+        </aside>
+
+        <div class="modal-code-viewer">
+          <div class="code-header">{{ modalSelectedFilePath || '暂无文件' }}</div>
+          <pre><code>{{ modalSelectedFileContent }}</code></pre>
+        </div>
+      </div>
+    </a-modal>
   </div>
 </template>
 
@@ -104,7 +179,23 @@ import {
   type AppProjectSnapshotVO,
   type AppVO,
 } from '@/api/app'
+import { listChatHistoryApi, type ChatHistoryItem } from '@/api/chatHistory'
+import { useVisualEditor } from '@/composables/useVisualEditor'
 import myAxios from '@/plugins/myAxios'
+
+interface TimelineEvent {
+  id: number
+  type: 'assistant' | 'assistant_delta' | 'status' | 'result' | 'error' | 'done' | 'user'
+  role: 'agent' | 'user' | 'system'
+  roleLabel: string
+  title: string
+  message: string
+  time: string
+  pending?: boolean
+}
+
+type PhaseStatus = 'pending' | 'active' | 'done' | 'error'
+type PhaseKey = 'analysis' | 'generation' | 'build' | 'result'
 
 const route = useRoute()
 const appId = route.params.id as string
@@ -116,10 +207,33 @@ const inputMsg = ref('')
 const streaming = ref(false)
 const deploying = ref(false)
 const selectedFilePath = ref('')
+const fullCodeModalOpen = ref(false)
+const modalSelectedFilePath = ref('')
 const messagesRef = ref<HTMLElement | null>(null)
-const events = ref<{ id: number; type: string; title: string; message: string }[]>([])
+const previewFrameRef = ref<HTMLIFrameElement | null>(null)
+const events = ref<TimelineEvent[]>([])
+const visualEditMode = ref(false)
+const selectedWallpaper = ref<'bg1' | 'bg2' | 'bg3'>('bg1')
+const activePhaseKey = ref<PhaseKey>('analysis')
+const phaseState = ref<Record<PhaseKey, PhaseStatus>>({
+  analysis: 'pending',
+  generation: 'pending',
+  build: 'pending',
+  result: 'pending',
+})
 let eventId = 0
 let eventSource: EventSource | null = null
+let pendingAssistantEventId: number | null = null
+
+const wallpaperMap: Record<'bg1' | 'bg2' | 'bg3', string> = {
+  bg1: '/images/home-bg1.jpg',
+  bg2: '/images/home-bg2.jpg',
+  bg3: '/images/home-bg3.jpg',
+}
+
+const pageStyle = computed(() => ({
+  '--editor-bg-image': `url('${wallpaperMap[selectedWallpaper.value]}')`,
+}))
 
 const typeLabel = computed(() => {
   const map: Record<string, string> = {
@@ -131,8 +245,17 @@ const typeLabel = computed(() => {
 })
 
 const projectFiles = computed(() => projectSnapshot.value?.files || [])
+const frontendProjectFiles = computed(() =>
+  projectFiles.value.filter((file) => isFrontendProjectFile(file.path)),
+)
+const visibleProjectFiles = computed(() => frontendProjectFiles.value.slice(0, 10))
+const hiddenFrontendFiles = computed(() => frontendProjectFiles.value.slice(10))
 const selectedFileContent = computed(() => {
   const file = projectFiles.value.find((item) => item.path === selectedFilePath.value)
+  return file?.content || ''
+})
+const modalSelectedFileContent = computed(() => {
+  const file = frontendProjectFiles.value.find((item) => item.path === modalSelectedFilePath.value)
   return file?.content || ''
 })
 const resolvedPreviewUrl = computed(() => {
@@ -140,13 +263,164 @@ const resolvedPreviewUrl = computed(() => {
   const baseURL = (myAxios.defaults.baseURL || '') as string
   return `${baseURL.replace(/\/api$/, '')}${projectSnapshot.value.previewUrl}`
 })
+const visibleEvents = computed(() =>
+  events.value.filter(
+    (item) =>
+      item.type !== 'status'
+      && item.type !== 'done'
+      && item.type !== 'assistant_delta'
+      && item.type !== 'result',
+  ),
+)
+const {
+  selectedElement,
+  clearSelectedElement,
+  syncVisualEditor,
+} = useVisualEditor({
+  iframeRef: previewFrameRef,
+  enabledRef: visualEditMode,
+})
+
+function formatTime(date = new Date()) {
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
+
+function isFrontendProjectFile(path: string) {
+  const normalizedPath = path.replace(/\\/g, '/')
+  if (
+    normalizedPath.startsWith('src/main/java/')
+    || normalizedPath.startsWith('src/test/')
+    || normalizedPath.startsWith('backend/')
+    || normalizedPath.startsWith('server/')
+    || normalizedPath.startsWith('api/')
+  ) {
+    return false
+  }
+  return [
+    'src/',
+    'public/',
+    'components/',
+    'views/',
+    'assets/',
+    'pages/',
+    'composables/',
+    'stores/',
+  ].some((prefix) => normalizedPath.startsWith(prefix))
+    || [
+      'index.html',
+      'package.json',
+      'package-lock.json',
+      'pnpm-lock.yaml',
+      'yarn.lock',
+      'README.md',
+    ].includes(normalizedPath)
+    || normalizedPath.startsWith('vite.config')
+    || normalizedPath.startsWith('tsconfig')
+    || normalizedPath.startsWith('.env')
+}
+
+function openFullCodeModal() {
+  fullCodeModalOpen.value = true
+  if (!modalSelectedFilePath.value || !frontendProjectFiles.value.some((file) => file.path === modalSelectedFilePath.value)) {
+    modalSelectedFilePath.value = hiddenFrontendFiles.value[0]?.path || frontendProjectFiles.value[0]?.path || ''
+  }
+}
+
+function resetPhaseState() {
+  phaseState.value = {
+    analysis: 'pending',
+    generation: 'pending',
+    build: 'pending',
+    result: 'pending',
+  }
+  activePhaseKey.value = 'analysis'
+}
+
+function updatePhase(messageText: string, type: TimelineEvent['type']) {
+  if (type === 'error') {
+    phaseState.value[activePhaseKey.value] = 'error'
+    return
+  }
+  if (type === 'result') {
+    phaseState.value.analysis = 'done'
+    phaseState.value.generation = 'done'
+    phaseState.value.build = projectSnapshot.value?.previewUrl ? 'done' : phaseState.value.build
+    phaseState.value.result = 'done'
+    activePhaseKey.value = 'result'
+    return
+  }
+  if (type === 'done') {
+    if (phaseState.value.result === 'active') {
+      phaseState.value.result = 'done'
+    }
+    return
+  }
+
+  const text = messageText.toLowerCase()
+  if (text.includes('分析') || text.includes('需求')) {
+    phaseState.value.analysis = 'active'
+    activePhaseKey.value = 'analysis'
+    return
+  }
+  if (text.includes('生成') || text.includes('编排') || text.includes('整理工程结构')) {
+    phaseState.value.analysis = 'done'
+    phaseState.value.generation = 'active'
+    activePhaseKey.value = 'generation'
+    return
+  }
+  if (text.includes('构建') || text.includes('预览') || text.includes('dist')) {
+    phaseState.value.analysis = 'done'
+    phaseState.value.generation = 'done'
+    phaseState.value.build = 'active'
+    activePhaseKey.value = 'build'
+    return
+  }
+  if (text.includes('写入') || text.includes('结果') || text.includes('完成')) {
+    phaseState.value.analysis = 'done'
+    phaseState.value.generation = 'done'
+    if (phaseState.value.build === 'active') {
+      phaseState.value.build = 'done'
+    }
+    phaseState.value.result = 'active'
+    activePhaseKey.value = 'result'
+  }
+}
 
 async function loadApp() {
   const res = await getAppVOByIdApi(appId)
   if (res.data.code === 0 && res.data.data) {
     const data = res.data.data as AppVO
     app.value = data
-    activeTab.value = data.codeGenType === 'vue_project' ? 'project' : 'preview'
+    if (!inputMsg.value.trim()) {
+      inputMsg.value = route.query.prompt?.toString()
+        || data.initPrompt
+        || window.localStorage.getItem('pendingAppPrompt')
+        || ''
+    }
+  }
+}
+
+async function loadHistory() {
+  try {
+    const res = await listChatHistoryApi(appId, 50)
+    if (res.data.code !== 0 || !Array.isArray(res.data.data)) {
+      return
+    }
+    const historyList = [...(res.data.data as ChatHistoryItem[])].reverse()
+    events.value = historyList.map((item, index) => ({
+      id: index + 1,
+      type: item.messageType === 'user' ? 'user' : item.messageType === 'error' ? 'error' : 'assistant',
+      role: item.messageType === 'user' ? 'user' : item.messageType === 'error' ? 'system' : 'agent',
+      roleLabel: item.messageType === 'user' ? '用户' : item.messageType === 'error' ? '系统' : 'AI',
+      title: item.messageType === 'user' ? '我的需求' : item.messageType === 'error' ? '错误信息' : 'AI 回复',
+      message: item.message,
+      time: formatTime(new Date(item.createTime)),
+      pending: false,
+    }))
+    eventId = events.value.length
+  } catch {
+    events.value = []
+    eventId = 0
   }
 }
 
@@ -172,20 +446,57 @@ function applySnapshot(snapshot: AppProjectSnapshotVO | null) {
   if (!selectedFilePath.value || !matchedFile) {
     selectedFilePath.value = snapshot?.entryFilePath || files[0]?.path || ''
   }
+  activeTab.value = snapshot?.previewUrl ? 'preview' : 'project'
+  if (snapshot?.previewUrl) {
+    nextTick(() => syncVisualEditor())
+  }
 }
 
-function pushEvent(type: string, messageText: string) {
-  const titleMap: Record<string, string> = {
-    status: '状态更新',
-    result: '结果就绪',
-    error: '发生错误',
-    done: '流程结束',
+function pushEvent(type: TimelineEvent['type'], messageText: string, role: TimelineEvent['role'] = 'agent') {
+  const titleMap: Record<TimelineEvent['type'], string> = {
+    user: '我的需求',
+    assistant: 'Agent 回复',
+    assistant_delta: 'Agent 正在输入',
+    result: '结果已返回',
+    error: '处理失败',
+    done: '本轮结束',
+    status: '处理中',
+  }
+  const roleLabelMap: Record<TimelineEvent['role'], string> = {
+    user: '用户',
+    agent: 'Agent',
+    system: '系统',
   }
   events.value.push({
     id: ++eventId,
     type,
-    title: titleMap[type] || '消息',
+    role,
+    roleLabel: roleLabelMap[role],
+    title: titleMap[type],
     message: messageText,
+    time: formatTime(),
+    pending: false,
+  })
+  updatePhase(messageText, type)
+  nextTick(() => {
+    if (messagesRef.value) {
+      messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+    }
+  })
+}
+
+function createPendingAssistant() {
+  const id = ++eventId
+  pendingAssistantEventId = id
+  events.value.push({
+    id,
+    type: 'assistant',
+    role: 'agent',
+    roleLabel: 'AI',
+    title: 'AI 回复',
+    message: '正在生成中，请稍候...',
+    time: formatTime(),
+    pending: true,
   })
   nextTick(() => {
     if (messagesRef.value) {
@@ -194,45 +505,100 @@ function pushEvent(type: string, messageText: string) {
   })
 }
 
+function resolvePendingAssistant(finalMessage: string) {
+  if (pendingAssistantEventId == null) {
+    pushEvent('assistant', finalMessage)
+    return
+  }
+  const existing = events.value.find((item) => item.id === pendingAssistantEventId)
+  if (existing) {
+    existing.message = finalMessage
+    existing.pending = false
+    existing.time = formatTime()
+  }
+  pendingAssistantEventId = null
+}
+
+function buildPromptWithSelection(content: string) {
+  if (!selectedElement.value) {
+    return content
+  }
+  const selection = selectedElement.value
+  return `${content}\n\n[当前选中元素]\n标签：${selection.tagName}\n选择器：${selection.selector || '无'}\n文本：${selection.text || '无'}\nid：${selection.id || '无'}\nclass：${selection.className || '无'}\n请优先围绕这个元素及其相关区域进行修改。`
+}
+
 async function handleSend() {
   const content = inputMsg.value.trim()
   if (!content || streaming.value) return
+
+  resetPhaseState()
+  const requestMessage = buildPromptWithSelection(content)
   inputMsg.value = ''
-  pushEvent('status', `需求已提交：${content}`)
+  pendingAssistantEventId = null
+  pushEvent('user', content, 'user')
+  createPendingAssistant()
   streaming.value = true
 
   const baseURL = (myAxios.defaults.baseURL || '') as string
-  const url = `${baseURL}/app/chat/gen/code?appId=${appId}&message=${encodeURIComponent(content)}`
+  const url = `${baseURL}/app/chat/gen/code?appId=${appId}&message=${encodeURIComponent(requestMessage)}`
   eventSource = new EventSource(url, { withCredentials: true })
 
   eventSource.onmessage = (event) => {
     const payload = JSON.parse(event.data) as AgentStreamEvent
     if (payload.type === 'result') {
       applySnapshot(payload.data || null)
-      pushEvent(payload.type, payload.message || '工程生成完成')
-      activeTab.value = 'project'
+      resolvePendingAssistant(payload.message || '这轮结果已经准备好了，你可以查看右侧文件和预览。')
+      return
+    }
+    if (payload.type === 'error') {
+      resolvePendingAssistant('生成过程中出现了问题，请稍后重试。')
+      pushEvent('error', payload.message || '生成失败', 'system')
       return
     }
     if (payload.type === 'done') {
-      pushEvent(payload.type, '本轮 Agent 任务已结束')
       closeStream()
       return
     }
-    pushEvent(payload.type, payload.message || '收到新的 Agent 状态')
   }
 
   eventSource.onerror = () => {
-    pushEvent('error', '流式连接已中断')
+    resolvePendingAssistant('生成过程中断开了连接，请重新尝试。')
+    pushEvent('error', '流式连接中断，请稍后重试。', 'system')
     closeStream()
   }
+
+  handleClearSelectedElement()
+  visualEditMode.value = false
 }
 
 function closeStream() {
   streaming.value = false
+  pendingAssistantEventId = null
   if (eventSource) {
     eventSource.close()
     eventSource = null
   }
+  if (phaseState.value.result === 'active') {
+    phaseState.value.result = 'done'
+  }
+}
+
+function toggleVisualEditMode() {
+  if (!projectSnapshot.value?.previewUrl) {
+    message.warning('当前没有可编辑预览，请先生成并构建静态预览')
+    return
+  }
+  visualEditMode.value = !visualEditMode.value
+  if (visualEditMode.value) {
+    activeTab.value = 'preview'
+    nextTick(() => syncVisualEditor())
+  } else {
+    handleClearSelectedElement()
+  }
+}
+
+function handleClearSelectedElement() {
+  clearSelectedElement()
 }
 
 async function handleDeploy() {
@@ -264,10 +630,10 @@ async function handleDownload() {
     const res = await downloadAppCodeApi(appId)
     const blob = new Blob([res.data])
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${app.value?.appName || 'app'}.zip`
-    a.click()
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `${app.value?.appName || 'app'}.zip`
+    anchor.click()
     URL.revokeObjectURL(url)
   } catch {
     message.error('下载失败')
@@ -277,340 +643,487 @@ async function handleDownload() {
 watch(projectFiles, (files: AppProjectFileVO[]) => {
   if (!files.length) {
     selectedFilePath.value = ''
+    modalSelectedFilePath.value = ''
+    return
+  }
+  if (!selectedFilePath.value || !files.some((item) => item.path === selectedFilePath.value)) {
+    selectedFilePath.value = visibleProjectFiles.value[0]?.path || files[0]?.path || ''
+  }
+  if (!modalSelectedFilePath.value || !files.some((item) => item.path === modalSelectedFilePath.value)) {
+    modalSelectedFilePath.value = frontendProjectFiles.value[0]?.path || files[0]?.path || ''
+  }
+})
+
+watch(activeTab, (tab) => {
+  if (tab === 'preview') {
+    nextTick(() => syncVisualEditor())
+  }
+})
+
+watch(resolvedPreviewUrl, () => {
+  if (!projectSnapshot.value?.previewUrl) {
+    visualEditMode.value = false
+    handleClearSelectedElement()
   }
 })
 
 onMounted(async () => {
+  const savedWallpaper = window.localStorage.getItem('homeWallpaper')
+  if (savedWallpaper === 'bg1' || savedWallpaper === 'bg2' || savedWallpaper === 'bg3') {
+    selectedWallpaper.value = savedWallpaper
+  }
   await loadApp()
+  await loadHistory()
   await refreshSnapshot()
+  window.localStorage.removeItem('pendingAppPrompt')
 })
 
-onUnmounted(closeStream)
+onUnmounted(() => {
+  closeStream()
+  handleClearSelectedElement()
+})
 </script>
 
 <style scoped>
 .editor-page {
   min-height: 100vh;
   padding: 82px 24px 28px;
-  background: linear-gradient(135deg, #f5e7ff 0%, #ffe6ef 34%, #fff1dc 68%, #edf6ff 100%);
-}
-
-.editor-page::before,
-.editor-page::after {
-  content: '';
-  position: fixed;
-  border-radius: 50%;
-  pointer-events: none;
-  filter: blur(18px);
-  z-index: 0;
-}
-
-.editor-page::before {
-  top: 86px;
-  left: -90px;
-  width: 280px;
-  height: 280px;
-  background: radial-gradient(circle, rgba(162, 155, 254, 0.26), transparent 70%);
-}
-
-.editor-page::after {
-  right: -70px;
-  bottom: 140px;
-  width: 300px;
-  height: 300px;
-  background: radial-gradient(circle, rgba(72, 219, 251, 0.22), transparent 72%);
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.12), rgba(240, 246, 255, 0.2)),
+    var(--editor-bg-image, none),
+    linear-gradient(135deg, #eef5ff 0%, #f8f3ff 42%, #fff6fb 100%);
+  background-size: cover, cover, auto;
+  background-position: center top, center top, center;
 }
 
 .page-header,
 .editor-layout {
-  position: relative;
-  z-index: 1;
+  max-width: 1320px;
+  margin: 0 auto;
 }
 
 .page-header {
-  max-width: 1400px;
-  margin: 0 auto 20px;
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 24px;
+  align-items: center;
+  margin-bottom: 22px;
 }
 
 .back-link {
-  color: #7b5adb;
+  color: rgba(42, 64, 101, 0.88);
+  text-decoration: none;
 }
 
 .page-header h1 {
   margin: 8px 0 4px;
-  background: linear-gradient(135deg, #fd79a8 0%, #a29bfe 55%, #48dbfb 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: #f5fbff;
+  font-size: 34px;
+  text-shadow: 0 4px 20px rgba(61, 97, 157, 0.14);
 }
 
 .page-header p {
   margin: 0;
-  color: #786f91;
+  color: rgba(52, 67, 97, 0.88);
 }
 
 .header-actions {
   display: flex;
-  gap: 8px;
-}
-
-.header-actions :deep(.ant-btn) {
-  border-radius: 999px;
+  gap: 12px;
 }
 
 .editor-layout {
-  max-width: 1400px;
-  margin: 0 auto;
   display: grid;
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: minmax(380px, 460px) minmax(0, 1fr);
   gap: 20px;
+}
+
+.glass-panel {
+  border-radius: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.44);
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 28px 60px rgba(32, 54, 92, 0.14);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
 }
 
 .agent-panel,
 .workspace-panel {
-  background: rgba(255, 255, 255, 0.5);
-  border-radius: 30px;
-  border: 1px solid rgba(255, 255, 255, 0.66);
-  box-shadow: 0 18px 36px rgba(130, 112, 162, 0.08);
-  backdrop-filter: blur(12px);
+  min-height: 760px;
 }
 
 .agent-panel {
-  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  background: rgba(255, 255, 255, 0.44);
+  padding: 24px;
 }
 
-.panel-head p {
-  margin: 6px 0 0;
-  color: #857b9f;
-  font-size: 13px;
-  line-height: 1.6;
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 16px;
 }
 
 .panel-title {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
-  color: #3b3457;
+  color: #f5fbff;
 }
 
-.event-list {
-  min-height: 420px;
-  max-height: 60vh;
+.selection-alert {
+  margin-bottom: 14px;
+  border-radius: 18px;
+}
+
+.empty-block {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: rgba(52, 68, 98, 0.82);
+}
+
+.stream-panels {
+  flex: 1;
+  min-height: 320px;
+  max-height: 470px;
+  min-width: 0;
+}
+
+.unified-stream {
   overflow: auto;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  padding: 12px 14px 14px;
+}
+
+.compact-empty {
+  min-height: 120px;
+  padding: 8px 4px;
+}
+
+.message-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 2px 0;
 }
 
-.event-item,
-.empty-block,
-.summary-card,
-.file-item {
-  background: rgba(255, 255, 255, 0.28);
-  border: 1px solid rgba(255, 255, 255, 0.52);
-  box-shadow: none;
-}
-
-.event-item {
-  position: relative;
-  padding: 14px 14px 14px 18px;
+.message-card {
+  padding: 14px 16px;
   border-radius: 18px;
-  animation: riseIn 0.35s ease both;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 8px 24px rgba(43, 63, 98, 0.08);
 }
 
-.event-item.status {
-  border-left: 3px solid #6c5ce7;
+.message-card.user {
+  margin-left: 44px;
+  background: rgba(110, 168, 255, 0.18);
 }
 
-.event-item.result {
-  border-left: 3px solid #00b894;
+.message-card.agent {
+  margin-right: 44px;
+  background: rgba(255, 255, 255, 0.22);
 }
 
-.event-item.error {
-  border-left: 3px solid #ff7675;
+.message-card.pending {
+  border-style: dashed;
 }
 
-.event-item.done {
-  border-left: 3px solid #8e8ca8;
+.message-card.system {
+  background: rgba(255, 120, 120, 0.16);
 }
 
-.event-item strong {
-  display: block;
-  margin-bottom: 5px;
-  color: #3b3457;
-  font-size: 14px;
+.message-card.done {
+  background: rgba(255, 255, 255, 0.12);
 }
 
-.event-item p {
+.message-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: rgba(53, 76, 112, 0.8);
+  font-size: 12px;
+}
+
+.message-role {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  font-weight: 600;
+}
+
+.message-title {
+  font-weight: 600;
+}
+
+.message-time {
+  margin-left: auto;
+}
+
+.message-text {
   margin: 0;
-  color: #746b90;
-  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: rgba(49, 64, 93, 0.92);
+  line-height: 1.8;
+}
+
+.message-loading {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.loading-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #5d7fae;
+  animation: loading-bounce 1s infinite ease-in-out;
+}
+
+.loading-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.loading-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes loading-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.45;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.chat-input {
+  margin-top: 14px;
+}
+
+:deep(.chat-input textarea.ant-input) {
+  border-radius: 22px !important;
+  border: 1px solid rgba(255, 255, 255, 0.34) !important;
+  background: rgba(255, 255, 255, 0.18) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24) !important;
+  color: #334363 !important;
 }
 
 .panel-actions {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  color: #7b7394;
-  padding: 0 2px;
+  gap: 16px;
+  margin-top: 14px;
 }
 
-.agent-panel :deep(.ant-input) {
-  border: none !important;
-  border-radius: 20px !important;
-  background: rgba(255, 255, 255, 0.26) !important;
-  color: #4f4768 !important;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.48) !important;
-  backdrop-filter: blur(8px);
+.shortcut-tip {
+  color: rgba(58, 74, 105, 0.74);
+  font-size: 13px;
 }
 
-.agent-panel :deep(.ant-input:focus),
-.agent-panel :deep(.ant-input-focused) {
-  box-shadow: inset 0 0 0 1px rgba(135, 176, 255, 0.38) !important;
+.action-buttons {
+  display: flex;
+  gap: 10px;
 }
 
 .workspace-panel {
-  overflow: hidden;
+  padding: 18px;
 }
 
 .workspace-header {
-  padding: 16px 18px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.34);
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .tabs {
   display: flex;
-  gap: 8px;
+  gap: 10px;
+}
+
+.tabs button,
+.file-item {
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.14);
+  color: #35517c;
 }
 
 .tabs button {
-  border: none;
+  min-width: 100px;
+  height: 40px;
+  padding: 0 16px;
   border-radius: 999px;
-  padding: 8px 14px;
-  color: #665d84;
-  background: rgba(245, 241, 251, 0.94);
-  box-shadow: 8px 8px 16px rgba(208, 203, 223, 0.55), -8px -8px 16px rgba(255, 255, 255, 0.96);
-  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  cursor: pointer;
 }
 
-.tabs button.active {
-  background: linear-gradient(135deg, #fd79a8, #a29bfe);
-  color: white;
-  box-shadow: 0 16px 32px rgba(162, 155, 254, 0.22);
+.tabs button.active,
+.file-item.active {
+  background: rgba(255, 255, 255, 0.32);
+  border-color: rgba(255, 255, 255, 0.38);
 }
 
 .project-panel {
   display: grid;
-  grid-template-columns: 300px 1fr;
-  min-height: 70vh;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 16px;
+  min-height: 680px;
+}
+
+.file-tree,
+.code-viewer,
+.iframe-wrap {
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 .file-tree {
-  padding: 18px;
-  border-right: 1px solid rgba(255, 255, 255, 0.32);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  padding: 16px;
   overflow: auto;
 }
 
 .summary-card {
   padding: 16px;
+  margin-bottom: 14px;
   border-radius: 20px;
+  background: rgba(255, 255, 255, 0.18);
 }
 
-.summary-card strong {
-  color: #3d355a;
+.summary-card strong,
+.code-header {
+  color: #f5fbff;
 }
 
 .summary-card p {
-  margin: 8px 0 0;
-  color: #766d92;
+  margin: 10px 0 0;
+  color: rgba(52, 67, 96, 0.86);
+  line-height: 1.8;
 }
 
 .file-item {
-  text-align: left;
+  width: 100%;
+  padding: 12px 14px;
+  margin-bottom: 10px;
   border-radius: 16px;
-  padding: 10px 12px;
-  color: #4a4265;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  text-align: left;
+  cursor: pointer;
 }
 
-.file-item:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 14px 24px rgba(163, 153, 196, 0.18);
-}
-
-.file-item.active {
-  background: linear-gradient(135deg, rgba(253, 121, 168, 0.16), rgba(162, 155, 254, 0.18));
-  color: #5b49b5;
+.more-file-item {
+  color: #476798;
+  font-weight: 600;
+  border-style: dashed;
 }
 
 .code-viewer {
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .code-header {
   padding: 14px 18px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.34);
-  font-weight: 600;
-  color: #4d4468;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.22);
 }
 
 .code-viewer pre {
+  flex: 1;
   margin: 0;
   padding: 18px;
   overflow: auto;
-  height: 100%;
-  background: linear-gradient(160deg, rgba(43, 35, 74, 0.94), rgba(20, 30, 57, 0.94));
-  color: #edf1ff;
+  min-height: 0;
+  max-height: 640px;
+  color: #31425f;
+}
+
+.full-code-modal {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 16px;
+  min-height: 640px;
+}
+
+.modal-file-tree,
+.modal-code-viewer {
+  min-height: 0;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+}
+
+.modal-file-tree {
+  padding: 16px;
+  overflow: auto;
+}
+
+.modal-title-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  color: #3b5b87;
+}
+
+.modal-code-viewer {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.modal-code-viewer pre {
+  flex: 1;
+  margin: 0;
+  padding: 18px;
+  overflow: auto;
+  min-height: 0;
+  max-height: 72vh;
+  color: #31425f;
+}
+
+:deep(.glass-code-modal .ant-modal-content) {
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 28px 70px rgba(32, 54, 92, 0.18);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+
+:deep(.glass-code-modal .ant-modal-close) {
+  color: #45648e;
 }
 
 .preview-panel,
 .iframe-wrap,
-iframe {
+.iframe-wrap iframe {
+  min-height: 680px;
+}
+
+.iframe-wrap {
+  overflow: hidden;
+}
+
+.iframe-wrap iframe {
   width: 100%;
-  min-height: 70vh;
+  border: 0;
+  background: #fff;
 }
 
-iframe {
-  border: none;
-}
-
-.empty-block {
-  padding: 24px;
-  border-radius: 22px;
-}
-
-.preview-empty {
-  margin: 24px;
-}
-
-@keyframes riseIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (max-width: 1100px) {
+@media (max-width: 1080px) {
   .editor-layout {
     grid-template-columns: 1fr;
   }
@@ -619,10 +1132,38 @@ iframe {
     grid-template-columns: 1fr;
   }
 
-  .file-tree {
-    border-right: none;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.32);
+  .full-code-modal {
+    grid-template-columns: 1fr;
   }
 }
 
+@media (max-width: 720px) {
+  .editor-page {
+    padding: 76px 14px 18px;
+  }
+
+  .page-header,
+  .panel-head,
+  .stream-overview,
+  .panel-actions,
+  .workspace-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .overview-side,
+  .header-actions,
+  .action-buttons {
+    width: 100%;
+  }
+
+  .phase-list {
+    grid-template-columns: 1fr;
+  }
+
+  .action-buttons :deep(.ant-btn),
+  .header-actions :deep(.ant-btn) {
+    width: 100%;
+  }
+}
 </style>

@@ -64,7 +64,7 @@ export interface AppProjectSnapshotVO {
 }
 
 export interface AgentStreamEvent {
-  type: 'status' | 'result' | 'error' | 'done'
+  type: 'assistant' | 'assistant_delta' | 'status' | 'result' | 'error' | 'done'
   message: string
   data?: AppProjectSnapshotVO
 }

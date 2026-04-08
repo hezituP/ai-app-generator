@@ -8,6 +8,7 @@
         </Transition>
       </router-view>
     </main>
+    <div class="site-signature">hezituP</div>
   </div>
 </template>
 
@@ -46,5 +47,21 @@ main { flex: 1; min-height: 0; }
 .page-fade-slide-leave-to {
   opacity: 0;
   transform: translateY(14px);
+}
+
+.site-signature {
+  position: fixed;
+  right: 16px;
+  bottom: 12px;
+  z-index: 1200;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  color: rgba(67, 82, 111, 0.76);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  backdrop-filter: blur(8px);
+  pointer-events: none;
 }
 </style>
