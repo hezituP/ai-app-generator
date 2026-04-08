@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "sessions": {
+    "cd969559ddbf497dacb7a24d68f3bfee": [
+      {
+        "expertId": "BackendArchitect",
+        "name": "Joy",
+        "profession": "后端架构师",
+        "avatarUrl": "https://acc-1258344699.cos.accelerate.myqcloud.com/workbuddy/experts/avatars/02-Engineering/BackendArchitect/BackendArchitect.png",
+        "promptUrl": "https://acc-1258344699.cos.accelerate.myqcloud.com/workbuddy/experts/experts/02-Engineering/BackendArchitect/BackendArchitect_zh.md",
+        "usedAt": 1775636898241,
+        "industryId": "all"
+      }
+    ]
+  },
+  "lastUpdated": 1775638681120
+}
