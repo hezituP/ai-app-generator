@@ -3,7 +3,8 @@
     <div class="header-inner">
       <nav class="nav-links">
         <router-link to="/" class="nav-link" :class="{ active: $route.path === '/' }">
-          <HomeOutlined /> 精选应用
+          <HomeOutlined />
+          精选应用
         </router-link>
         <router-link
           v-if="userStore.loginUser"
@@ -11,7 +12,8 @@
           class="nav-link"
           :class="{ active: $route.path === '/my-apps' }"
         >
-          <AppstoreOutlined /> 我的应用
+          <AppstoreOutlined />
+          我的应用
         </router-link>
         <router-link
           v-if="userStore.isAdmin()"
@@ -19,7 +21,8 @@
           class="nav-link nav-link-admin"
           :class="{ active: $route.path.startsWith('/admin') }"
         >
-          <SettingOutlined /> 应用管理
+          <SettingOutlined />
+          应用管理
         </router-link>
       </nav>
 
@@ -40,31 +43,46 @@
             <template #overlay>
               <a-menu class="light-dropdown">
                 <a-menu-item key="rename" @click="openRenameModal">
-                  <EditOutlined /> 修改用户名
+                  <EditOutlined />
+                  修改用户名
                 </a-menu-item>
                 <a-menu-item key="logout" @click="handleLogout">
-                  <LogoutOutlined /> 退出登录
+                  <LogoutOutlined />
+                  退出登录
                 </a-menu-item>
               </a-menu>
             </template>
           </a-dropdown>
         </template>
         <template v-else>
-          <router-link to="/login"><a-button class="btn-ghost">登录</a-button></router-link>
-          <router-link to="/register"><a-button type="primary" class="btn-reg">免费注册</a-button></router-link>
+          <router-link to="/login">
+            <a-button class="btn-ghost">登录</a-button>
+          </router-link>
+          <router-link to="/register">
+            <a-button type="primary" class="btn-reg">免费注册</a-button>
+          </router-link>
         </template>
       </div>
     </div>
 
-    <a-modal v-model:open="renameModalOpen" title="修改用户名" :footer="null" width="420px">
-      <a-form layout="vertical" @finish="handleRenameSubmit">
-        <a-form-item label="新的用户名" :rules="[{ required: true, message: '请输入用户名' }]">
-          <a-input v-model:value="renameValue" :maxlength="20" placeholder="请输入新的用户名" />
+    <a-modal
+      v-model:open="renameModalOpen"
+      title="修改用户名"
+      :confirm-loading="renaming"
+      ok-text="保存"
+      cancel-text="取消"
+      @ok="handleRenameSubmit"
+      @cancel="handleRenameCancel"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="新的用户名" required>
+          <a-input
+            v-model:value="renameValue"
+            :maxlength="20"
+            placeholder="请输入新的用户名"
+            @pressEnter.prevent="handleRenameSubmit"
+          />
         </a-form-item>
-        <div class="modal-actions">
-          <a-button @click="renameModalOpen = false">取消</a-button>
-          <a-button type="primary" html-type="submit" :loading="renaming">保存</a-button>
-        </div>
       </a-form>
     </a-modal>
   </header>
@@ -103,24 +121,35 @@ function openRenameModal() {
   renameModalOpen.value = true
 }
 
+function handleRenameCancel() {
+  if (renaming.value) {
+    return
+  }
+  renameModalOpen.value = false
+}
+
 async function handleRenameSubmit() {
   const userName = renameValue.value.trim()
   if (!userName) {
     message.warning('请输入用户名')
     return
   }
+  if (userName.length > 20) {
+    message.warning('用户名不能超过 20 个字符')
+    return
+  }
   renaming.value = true
   try {
     const res = await updateMyUserApi({ userName })
-    if (res.data.code === 0) {
+    if (res.data.code === 0 && res.data.data) {
       userStore.setLoginUser(res.data.data)
       renameModalOpen.value = false
       message.success('用户名已更新')
-    } else {
-      message.error(res.data.message || '修改失败')
+      return
     }
+    message.error(res.data.message || '修改失败，请稍后重试')
   } catch {
-    message.error('网络异常')
+    message.error('保存失败，请检查网络或后端服务')
   } finally {
     renaming.value = false
   }
@@ -233,12 +262,6 @@ async function handleLogout() {
   color: #345684 !important;
 }
 
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
 :deep(.light-dropdown) {
   border-radius: 16px !important;
   background: rgba(255, 255, 255, 0.88) !important;
@@ -260,15 +283,5 @@ async function handleLogout() {
   border: 1px solid rgba(255, 255, 255, 0.5);
   box-shadow: 0 24px 50px rgba(40, 58, 89, 0.14);
   backdrop-filter: blur(18px);
-}
-
-:deep(.ant-modal-header) {
-  background: transparent;
-}
-
-:deep(.ant-input) {
-  border-radius: 16px !important;
-  border: 1px solid rgba(255, 255, 255, 0.38) !important;
-  background: rgba(255, 255, 255, 0.3) !important;
 }
 </style>

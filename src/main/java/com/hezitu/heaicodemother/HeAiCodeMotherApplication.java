@@ -4,6 +4,7 @@ import dev.langchain4j.community.store.embedding.redis.spring.RedisEmbeddingStor
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
 
@@ -12,6 +13,7 @@ import org.springframework.context.annotation.FilterType;
         type = FilterType.REGEX,
         pattern = "com\\.hezitu\\.heaicodemother\\.workflow\\.langgraph4j\\..*"
 ))
+@EnableCaching
 @MapperScan("com.hezitu.heaicodemother.mapper")
 public class HeAiCodeMotherApplication {
 

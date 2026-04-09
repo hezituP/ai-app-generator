@@ -1,15 +1,25 @@
 <template>
   <div class="editor-page" :style="pageStyle">
     <header class="page-header">
-      <div>
-        <router-link to="/my-apps" class="back-link">返回应用列表</router-link>
-        <h1>{{ app?.appName || '加载中...' }}</h1>
+      <div class="header-main">
+        <router-link to="/my-apps" class="back-link">返回我的应用</router-link>
+        <h1>{{ app?.appName || 'AI 工程协作区' }}</h1>
         <p>{{ typeLabel }}</p>
       </div>
       <div class="header-actions">
-        <a-button @click="handleDownload"><DownloadOutlined /> 下载代码</a-button>
+        <a-select
+          v-model:value="uiScale"
+          class="ui-scale-select"
+          size="small"
+          :options="uiScaleOptions"
+        />
+        <a-button @click="handleDownload">
+          <DownloadOutlined />
+          下载代码
+        </a-button>
         <a-button type="primary" :loading="deploying" @click="handleDeploy">
-          <RocketOutlined /> {{ app?.deployKey ? '查看部署' : '部署' }}
+          <RocketOutlined />
+          {{ app?.deployKey ? '打开已部署站点' : '部署站点' }}
         </a-button>
       </div>
     </header>
@@ -29,34 +39,36 @@
           @close="handleClearSelectedElement"
         >
           <template #message>
-            已选中元素：{{ selectedElement.tagName }} · {{ selectedElement.selector || '未识别选择器' }}
+            已选中元素：{{ selectedElement.tagName }}
+            <span v-if="selectedElement.selector"> · {{ selectedElement.selector }}</span>
           </template>
           <template #description>
-            {{ selectedElement.text || '该元素暂无可提取文本' }}
+            {{ selectedElement.text || '当前元素没有明显文本内容。' }}
           </template>
         </a-alert>
 
-        <div class="stream-panels unified-stream" ref="messagesRef">
-          <div v-if="!events.length" class="compact-empty">
-            <p>这里会显示你和 AI 的对话，以及本轮生成过程中的关键回复。</p>
+        <div ref="messagesRef" class="stream-output">
+          <div v-if="!events.length" class="stream-empty">
+            这里会显示 AI 的历史对话、当前输出和工具执行过程。
           </div>
-          <div v-else class="message-list">
+          <div v-else class="stream-lines">
             <article
-              v-for="item in visibleEvents"
+              v-for="item in events"
               :key="item.id"
-              class="message-card"
-              :class="[item.role, { pending: item.pending }]"
+              class="stream-line"
+              :class="[item.role, item.kind, { pending: item.pending }]"
             >
-              <div class="message-meta">
-                <span class="message-role">{{ item.roleLabel }}</span>
-                <span class="message-time">{{ item.time }}</span>
+              <div class="line-meta">
+                <span class="line-badge">{{ item.roleLabel }}</span>
+                <span v-if="item.title" class="line-title">{{ item.title }}</span>
+                <span class="line-time">{{ item.time }}</span>
               </div>
               <div v-if="item.pending" class="message-loading">
                 <span class="loading-dot"></span>
                 <span class="loading-dot"></span>
                 <span class="loading-dot"></span>
               </div>
-              <p class="message-text">{{ item.message }}</p>
+              <p class="line-message">{{ item.message }}</p>
             </article>
           </div>
         </div>
@@ -66,7 +78,7 @@
           :rows="4"
           :disabled="streaming"
           class="chat-input"
-          placeholder="例如：保留首页布局，把首屏标题改得更轻柔，并让按钮层级更突出"
+          placeholder="描述你想生成或修改的页面、组件、布局和风格。"
           @keydown.enter.exact.prevent="handleSend"
         />
 
@@ -81,7 +93,9 @@
             >
               {{ visualEditMode ? '退出编辑模式' : '进入编辑模式' }}
             </a-button>
-            <a-button type="primary" :loading="streaming" @click="handleSend">发送给 Agent</a-button>
+            <a-button type="primary" :loading="streaming" @click="handleSend">
+              发送给 Agent
+            </a-button>
           </div>
         </div>
       </section>
@@ -89,8 +103,12 @@
       <section class="workspace-panel glass-panel">
         <div class="workspace-header">
           <div class="tabs">
-            <button :class="{ active: activeTab === 'project' }" @click="activeTab = 'project'">工程文件</button>
-            <button :class="{ active: activeTab === 'preview' }" @click="activeTab = 'preview'">预览</button>
+            <button :class="{ active: activeTab === 'project' }" @click="activeTab = 'project'">
+              工程文件
+            </button>
+            <button :class="{ active: activeTab === 'preview' }" @click="activeTab = 'preview'">
+              静态预览
+            </button>
           </div>
           <a-button size="small" @click="refreshSnapshot">刷新快照</a-button>
         </div>
@@ -99,7 +117,7 @@
           <aside class="file-tree">
             <div class="summary-card">
               <strong>工程摘要</strong>
-              <p>{{ projectSnapshot?.summary || '生成完成后会展示工程摘要' }}</p>
+              <p>{{ projectSnapshot?.summary || '生成完成后会在这里展示前端工程结构与摘要。' }}</p>
             </div>
             <button
               v-for="file in visibleProjectFiles"
@@ -115,13 +133,13 @@
               class="file-item more-file-item"
               @click="openFullCodeModal"
             >
-              ... 还有 {{ hiddenFrontendFiles.length }} 个文件
+              ... 还有 {{ hiddenFrontendFiles.length }} 个前端文件
             </button>
           </aside>
 
           <div class="code-viewer">
-            <div class="code-header">{{ selectedFilePath || '暂无文件' }}</div>
-            <pre><code>{{ selectedFileContent }}</code></pre>
+            <div class="code-header">{{ selectedFilePath || '请选择一个文件查看代码' }}</div>
+            <pre><code>{{ selectedFileContent || '// 暂无代码内容' }}</code></pre>
           </div>
         </div>
 
@@ -130,8 +148,8 @@
             <iframe ref="previewFrameRef" :src="resolvedPreviewUrl" title="preview" />
           </div>
           <div v-else class="empty-block preview-empty">
-            <h3>当前还没有可用预览</h3>
-            <p>先让 Agent 生成一轮工程，或刷新快照等待静态预览构建完成。</p>
+            <h3>还没有可预览的站点</h3>
+            <p>发送一次生成或修改需求后，这里会自动展示静态预览。</p>
           </div>
         </div>
       </section>
@@ -156,8 +174,8 @@
         </aside>
 
         <div class="modal-code-viewer">
-          <div class="code-header">{{ modalSelectedFilePath || '暂无文件' }}</div>
-          <pre><code>{{ modalSelectedFileContent }}</code></pre>
+          <div class="code-header">{{ modalSelectedFilePath || '请选择一个文件查看代码' }}</div>
+          <pre><code>{{ modalSelectedFileContent || '// 暂无代码内容' }}</code></pre>
         </div>
       </div>
     </a-modal>
@@ -185,7 +203,8 @@ import myAxios from '@/plugins/myAxios'
 
 interface TimelineEvent {
   id: number
-  type: 'assistant' | 'assistant_delta' | 'status' | 'result' | 'error' | 'done' | 'user'
+  type: 'assistant' | 'assistant_delta' | 'status' | 'result' | 'error' | 'done' | 'user' | 'tool'
+  kind: 'message' | 'tool' | 'status' | 'error'
   role: 'agent' | 'user' | 'system'
   roleLabel: string
   title: string
@@ -194,8 +213,7 @@ interface TimelineEvent {
   pending?: boolean
 }
 
-type PhaseStatus = 'pending' | 'active' | 'done' | 'error'
-type PhaseKey = 'analysis' | 'generation' | 'build' | 'result'
+type UiScale = 'compact' | 'default' | 'expanded'
 
 const route = useRoute()
 const appId = route.params.id as string
@@ -214,14 +232,9 @@ const previewFrameRef = ref<HTMLIFrameElement | null>(null)
 const events = ref<TimelineEvent[]>([])
 const visualEditMode = ref(false)
 const selectedWallpaper = ref<'bg1' | 'bg2' | 'bg3'>('bg1')
+const uiScale = ref<UiScale>('expanded')
 const previewVersion = ref(0)
-const activePhaseKey = ref<PhaseKey>('analysis')
-const phaseState = ref<Record<PhaseKey, PhaseStatus>>({
-  analysis: 'pending',
-  generation: 'pending',
-  build: 'pending',
-  result: 'pending',
-})
+
 let eventId = 0
 let eventSource: EventSource | null = null
 let pendingAssistantEventId: number | null = null
@@ -232,13 +245,60 @@ const wallpaperMap: Record<'bg1' | 'bg2' | 'bg3', string> = {
   bg3: '/images/home-bg3.jpg',
 }
 
-const pageStyle = computed(() => ({
-  '--editor-bg-image': `url('${wallpaperMap[selectedWallpaper.value]}')`,
-}))
+const uiScaleOptions = [
+  { value: 'compact', label: '紧凑' },
+  { value: 'default', label: '标准' },
+  { value: 'expanded', label: '宽松' },
+]
+
+const scaleConfigMap: Record<
+  UiScale,
+  {
+    panelMinHeight: string
+    agentWidth: string
+    workspaceWidth: string
+    panelPadding: string
+    streamMaxHeight: string
+  }
+> = {
+  compact: {
+    panelMinHeight: '760px',
+    agentWidth: 'minmax(460px, 0.96fr)',
+    workspaceWidth: 'minmax(0, 1.04fr)',
+    panelPadding: '22px',
+    streamMaxHeight: '510px',
+  },
+  default: {
+    panelMinHeight: '840px',
+    agentWidth: 'minmax(540px, 0.96fr)',
+    workspaceWidth: 'minmax(0, 1.04fr)',
+    panelPadding: '26px',
+    streamMaxHeight: '620px',
+  },
+  expanded: {
+    panelMinHeight: '980px',
+    agentWidth: 'minmax(600px, 0.9fr)',
+    workspaceWidth: 'minmax(0, 1.1fr)',
+    panelPadding: '32px',
+    streamMaxHeight: '760px',
+  },
+}
+
+const pageStyle = computed(() => {
+  const currentScale = scaleConfigMap[uiScale.value]
+  return {
+    '--editor-bg-image': `url('${wallpaperMap[selectedWallpaper.value]}')`,
+    '--editor-agent-width': currentScale.agentWidth,
+    '--editor-workspace-width': currentScale.workspaceWidth,
+    '--editor-panel-padding': currentScale.panelPadding,
+    '--editor-panel-min-height': currentScale.panelMinHeight,
+    '--editor-stream-max-height': currentScale.streamMaxHeight,
+  }
+})
 
 const typeLabel = computed(() => {
   const map: Record<string, string> = {
-    html: '原生 HTML 模式',
+    html: 'HTML 单页模式',
     multi_file: '多文件站点模式',
     vue_project: 'Vue3 + Vite 工程模式',
   }
@@ -260,20 +320,14 @@ const modalSelectedFileContent = computed(() => {
   return file?.content || ''
 })
 const resolvedPreviewUrl = computed(() => {
-  if (!projectSnapshot.value?.previewUrl) return ''
+  if (!projectSnapshot.value?.previewUrl) {
+    return ''
+  }
   const baseURL = (myAxios.defaults.baseURL || '') as string
   const separator = projectSnapshot.value.previewUrl.includes('?') ? '&' : '?'
   return `${baseURL.replace(/\/api$/, '')}${projectSnapshot.value.previewUrl}${separator}t=${previewVersion.value}`
 })
-const visibleEvents = computed(() =>
-  events.value.filter(
-    (item) =>
-      item.type !== 'status'
-      && item.type !== 'done'
-      && item.type !== 'assistant_delta'
-      && item.type !== 'result',
-  ),
-)
+
 const {
   selectedElement,
   clearSelectedElement,
@@ -284,7 +338,10 @@ const {
 })
 
 function formatTime(date = new Date()) {
-  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function isFrontendProjectFile(path: string) {
@@ -321,6 +378,132 @@ function isFrontendProjectFile(path: string) {
     || normalizedPath.startsWith('.env')
 }
 
+function getToolTitle(messageText: string) {
+  const text = messageText.toLowerCase()
+  if (text.includes('分析') || text.includes('需求')) {
+    return 'Requirement Analyzer'
+  }
+  if (text.includes('生成') || text.includes('编排') || text.includes('文件')) {
+    return 'Project Generator'
+  }
+  if (text.includes('构建') || text.includes('预览') || text.includes('dist')) {
+    return 'Preview Builder'
+  }
+  if (text.includes('快照') || text.includes('结果') || text.includes('写入')) {
+    return 'Project Snapshot'
+  }
+  return 'Agent Tool'
+}
+
+function normalizeEventMessage(event: AgentStreamEvent) {
+  if (event.type === 'result' && event.data?.summary) {
+    return event.data.summary
+  }
+  return event.message || ''
+}
+
+function scrollMessagesToBottom() {
+  nextTick(() => {
+    if (messagesRef.value) {
+      messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+    }
+  })
+}
+
+function pushEvent(
+  type: TimelineEvent['type'],
+  messageText: string,
+  role: TimelineEvent['role'] = 'agent',
+  kind: TimelineEvent['kind'] = 'message',
+  title = '',
+) {
+  const roleLabelMap: Record<TimelineEvent['role'], string> = {
+    user: '我',
+    agent: 'AI',
+    system: '系统',
+  }
+  events.value.push({
+    id: ++eventId,
+    type,
+    kind,
+    role,
+    roleLabel: roleLabelMap[role],
+    title,
+    message: messageText,
+    time: formatTime(),
+    pending: false,
+  })
+  scrollMessagesToBottom()
+}
+
+function createPendingAssistant() {
+  const id = ++eventId
+  pendingAssistantEventId = id
+  events.value.push({
+    id,
+    type: 'assistant',
+    kind: 'message',
+    role: 'agent',
+    roleLabel: 'AI',
+    title: '',
+    message: '正在整理回复...',
+    time: formatTime(),
+    pending: true,
+  })
+  scrollMessagesToBottom()
+}
+
+function appendPendingAssistant(delta: string) {
+  if (!delta) {
+    return
+  }
+  if (pendingAssistantEventId == null) {
+    createPendingAssistant()
+  }
+  const existing = events.value.find((item) => item.id === pendingAssistantEventId)
+  if (!existing) {
+    return
+  }
+  if (existing.message === '正在整理回复...') {
+    existing.message = ''
+  }
+  existing.message += delta
+  existing.pending = true
+  existing.time = formatTime()
+  scrollMessagesToBottom()
+}
+
+function resolvePendingAssistant(finalMessage: string) {
+  if (pendingAssistantEventId == null) {
+    pushEvent('assistant', finalMessage, 'agent', 'message')
+    return
+  }
+  const existing = events.value.find((item) => item.id === pendingAssistantEventId)
+  if (existing) {
+    existing.message = finalMessage || existing.message || '本轮回复已完成。'
+    existing.pending = false
+    existing.time = formatTime()
+  }
+  pendingAssistantEventId = null
+  scrollMessagesToBottom()
+}
+
+function buildPromptWithSelection(content: string) {
+  if (!selectedElement.value) {
+    return content
+  }
+  const selection = selectedElement.value
+  return `${content}
+
+[当前选中元素]
+标签：${selection.tagName}
+选择器：${selection.selector || '无'}
+文本：${selection.text || '无'}
+id：${selection.id || '无'}
+class：${selection.className || '无'}
+请优先围绕这个元素及其相邻区域进行修改。`
+}
+
 function openFullCodeModal() {
   fullCodeModalOpen.value = true
   if (!modalSelectedFilePath.value || !frontendProjectFiles.value.some((file) => file.path === modalSelectedFilePath.value)) {
@@ -328,63 +511,30 @@ function openFullCodeModal() {
   }
 }
 
-function resetPhaseState() {
-  phaseState.value = {
-    analysis: 'pending',
-    generation: 'pending',
-    build: 'pending',
-    result: 'pending',
+function closeStream() {
+  streaming.value = false
+  pendingAssistantEventId = null
+  if (eventSource) {
+    eventSource.close()
+    eventSource = null
   }
-  activePhaseKey.value = 'analysis'
 }
 
-function updatePhase(messageText: string, type: TimelineEvent['type']) {
-  if (type === 'error') {
-    phaseState.value[activePhaseKey.value] = 'error'
+function applySnapshot(snapshot: AppProjectSnapshotVO | null) {
+  projectSnapshot.value = snapshot
+  previewVersion.value += 1
+  const files = snapshot?.files || []
+  if (!files.length) {
+    selectedFilePath.value = ''
     return
   }
-  if (type === 'result') {
-    phaseState.value.analysis = 'done'
-    phaseState.value.generation = 'done'
-    phaseState.value.build = projectSnapshot.value?.previewUrl ? 'done' : phaseState.value.build
-    phaseState.value.result = 'done'
-    activePhaseKey.value = 'result'
-    return
+  const matchedFile = files.find((item) => item.path === selectedFilePath.value)
+  if (!selectedFilePath.value || !matchedFile) {
+    selectedFilePath.value = snapshot?.entryFilePath || frontendProjectFiles.value[0]?.path || files[0]?.path || ''
   }
-  if (type === 'done') {
-    if (phaseState.value.result === 'active') {
-      phaseState.value.result = 'done'
-    }
-    return
-  }
-
-  const text = messageText.toLowerCase()
-  if (text.includes('分析') || text.includes('需求')) {
-    phaseState.value.analysis = 'active'
-    activePhaseKey.value = 'analysis'
-    return
-  }
-  if (text.includes('生成') || text.includes('编排') || text.includes('整理工程结构')) {
-    phaseState.value.analysis = 'done'
-    phaseState.value.generation = 'active'
-    activePhaseKey.value = 'generation'
-    return
-  }
-  if (text.includes('构建') || text.includes('预览') || text.includes('dist')) {
-    phaseState.value.analysis = 'done'
-    phaseState.value.generation = 'done'
-    phaseState.value.build = 'active'
-    activePhaseKey.value = 'build'
-    return
-  }
-  if (text.includes('写入') || text.includes('结果') || text.includes('完成')) {
-    phaseState.value.analysis = 'done'
-    phaseState.value.generation = 'done'
-    if (phaseState.value.build === 'active') {
-      phaseState.value.build = 'done'
-    }
-    phaseState.value.result = 'active'
-    activePhaseKey.value = 'result'
+  activeTab.value = snapshot?.previewUrl ? 'preview' : 'project'
+  if (snapshot?.previewUrl) {
+    nextTick(() => syncVisualEditor())
   }
 }
 
@@ -412,14 +562,16 @@ async function loadHistory() {
     events.value = historyList.map((item, index) => ({
       id: index + 1,
       type: item.messageType === 'user' ? 'user' : item.messageType === 'error' ? 'error' : 'assistant',
+      kind: item.messageType === 'error' ? 'error' : 'message',
       role: item.messageType === 'user' ? 'user' : item.messageType === 'error' ? 'system' : 'agent',
-      roleLabel: item.messageType === 'user' ? '用户' : item.messageType === 'error' ? '系统' : 'AI',
-      title: item.messageType === 'user' ? '我的需求' : item.messageType === 'error' ? '错误信息' : 'AI 回复',
+      roleLabel: item.messageType === 'user' ? '我' : item.messageType === 'error' ? '系统' : 'AI',
+      title: '',
       message: item.message,
       time: formatTime(new Date(item.createTime)),
       pending: false,
     }))
     eventId = events.value.length
+    scrollMessagesToBottom()
   } catch {
     events.value = []
     eventId = 0
@@ -437,162 +589,85 @@ async function refreshSnapshot() {
   }
 }
 
-function applySnapshot(snapshot: AppProjectSnapshotVO | null) {
-  projectSnapshot.value = snapshot
-  previewVersion.value += 1
-  const files = snapshot?.files || []
-  if (!files.length) {
-    selectedFilePath.value = ''
+function handleStreamEvent(event: AgentStreamEvent) {
+  const text = normalizeEventMessage(event)
+  if (event.type === 'assistant_delta') {
+    appendPendingAssistant(text)
     return
   }
-  const matchedFile = files.find((item) => item.path === selectedFilePath.value)
-  if (!selectedFilePath.value || !matchedFile) {
-    selectedFilePath.value = snapshot?.entryFilePath || files[0]?.path || ''
-  }
-  activeTab.value = snapshot?.previewUrl ? 'preview' : 'project'
-  if (snapshot?.previewUrl) {
-    nextTick(() => syncVisualEditor())
-  }
-}
-
-function pushEvent(type: TimelineEvent['type'], messageText: string, role: TimelineEvent['role'] = 'agent') {
-  const titleMap: Record<TimelineEvent['type'], string> = {
-    user: '我的需求',
-    assistant: 'Agent 回复',
-    assistant_delta: 'Agent 正在输入',
-    result: '结果已返回',
-    error: '处理失败',
-    done: '本轮结束',
-    status: '处理中',
-  }
-  const roleLabelMap: Record<TimelineEvent['role'], string> = {
-    user: '用户',
-    agent: 'Agent',
-    system: '系统',
-  }
-  events.value.push({
-    id: ++eventId,
-    type,
-    role,
-    roleLabel: roleLabelMap[role],
-    title: titleMap[type],
-    message: messageText,
-    time: formatTime(),
-    pending: false,
-  })
-  updatePhase(messageText, type)
-  nextTick(() => {
-    if (messagesRef.value) {
-      messagesRef.value.scrollTop = messagesRef.value.scrollHeight
-    }
-  })
-}
-
-function createPendingAssistant() {
-  const id = ++eventId
-  pendingAssistantEventId = id
-  events.value.push({
-    id,
-    type: 'assistant',
-    role: 'agent',
-    roleLabel: 'AI',
-    title: 'AI 回复',
-    message: '正在生成中，请稍候...',
-    time: formatTime(),
-    pending: true,
-  })
-  nextTick(() => {
-    if (messagesRef.value) {
-      messagesRef.value.scrollTop = messagesRef.value.scrollHeight
-    }
-  })
-}
-
-function resolvePendingAssistant(finalMessage: string) {
-  if (pendingAssistantEventId == null) {
-    pushEvent('assistant', finalMessage)
+  if (event.type === 'assistant') {
+    resolvePendingAssistant(text)
     return
   }
-  const existing = events.value.find((item) => item.id === pendingAssistantEventId)
-  if (existing) {
-    existing.message = finalMessage
-    existing.pending = false
-    existing.time = formatTime()
+  if (event.type === 'status') {
+    pushEvent('tool', text, 'system', 'tool', getToolTitle(text))
+    return
   }
-  pendingAssistantEventId = null
-}
-
-function buildPromptWithSelection(content: string) {
-  if (!selectedElement.value) {
-    return content
+  if (event.type === 'result') {
+    if (event.data) {
+      applySnapshot(event.data)
+    }
+    if (text) {
+      resolvePendingAssistant(text)
+    }
+    return
   }
-  const selection = selectedElement.value
-  return `${content}\n\n[当前选中元素]\n标签：${selection.tagName}\n选择器：${selection.selector || '无'}\n文本：${selection.text || '无'}\nid：${selection.id || '无'}\nclass：${selection.className || '无'}\n请优先围绕这个元素及其相关区域进行修改。`
+  if (event.type === 'error') {
+    resolvePendingAssistant('本轮生成中断。')
+    pushEvent('error', text || '生成失败，请稍后重试。', 'system', 'error')
+    closeStream()
+    return
+  }
+  if (event.type === 'done') {
+    closeStream()
+    void refreshSnapshot()
+  }
 }
 
 async function handleSend() {
   const content = inputMsg.value.trim()
-  if (!content || streaming.value) return
+  if (!content || streaming.value) {
+    return
+  }
 
-  resetPhaseState()
-  const requestMessage = buildPromptWithSelection(content)
-  inputMsg.value = ''
-  pendingAssistantEventId = null
-  pushEvent('user', content, 'user')
+  pushEvent('user', content, 'user', 'message')
   createPendingAssistant()
   streaming.value = true
 
-  const baseURL = (myAxios.defaults.baseURL || '') as string
-  const url = `${baseURL}/app/chat/gen/code?appId=${appId}&message=${encodeURIComponent(requestMessage)}`
-  eventSource = new EventSource(url, { withCredentials: true })
-
-  eventSource.onmessage = (event) => {
-    const payload = JSON.parse(event.data) as AgentStreamEvent
-    if (payload.type === 'assistant') {
-      resolvePendingAssistant(payload.message || '我已经整理好这次的说明了。')
-      return
-    }
-    if (payload.type === 'result') {
-      applySnapshot(payload.data || null)
-      resolvePendingAssistant(payload.message || '这轮结果已经准备好了，你可以查看右侧文件和预览。')
-      return
-    }
-    if (payload.type === 'error') {
-      resolvePendingAssistant('生成过程中出现了问题，请稍后重试。')
-      pushEvent('error', payload.message || '生成失败', 'system')
-      return
-    }
-    if (payload.type === 'done') {
-      closeStream()
-      return
-    }
-  }
-
-  eventSource.onerror = () => {
-    resolvePendingAssistant('生成过程中断开了连接，请重新尝试。')
-    pushEvent('error', '流式连接中断，请稍后重试。', 'system')
-    closeStream()
-  }
-
-  handleClearSelectedElement()
+  const prompt = buildPromptWithSelection(content)
+  inputMsg.value = ''
   visualEditMode.value = false
-}
+  handleClearSelectedElement()
 
-function closeStream() {
-  streaming.value = false
-  pendingAssistantEventId = null
-  if (eventSource) {
-    eventSource.close()
-    eventSource = null
-  }
-  if (phaseState.value.result === 'active') {
-    phaseState.value.result = 'done'
+  const baseURL = (myAxios.defaults.baseURL || '') as string
+  const streamUrl = `${baseURL}/app/chat/gen/code?appId=${encodeURIComponent(appId)}&message=${encodeURIComponent(prompt)}`
+
+  try {
+    eventSource = new EventSource(streamUrl, { withCredentials: true })
+    eventSource.onmessage = (evt) => {
+      try {
+        const payload = JSON.parse(evt.data) as AgentStreamEvent
+        handleStreamEvent(payload)
+      } catch {
+        pushEvent('error', '流式数据解析失败。', 'system', 'error')
+        closeStream()
+      }
+    }
+    eventSource.onerror = () => {
+      pushEvent('error', '流式连接已断开，请稍后重试。', 'system', 'error')
+      closeStream()
+      void loadHistory()
+      void refreshSnapshot()
+    }
+  } catch {
+    pushEvent('error', '无法建立流式连接。', 'system', 'error')
+    closeStream()
   }
 }
 
 function toggleVisualEditMode() {
   if (!projectSnapshot.value?.previewUrl) {
-    message.warning('当前没有可编辑预览，请先生成并构建静态预览')
+    message.warning('当前还没有可编辑的静态预览，请先生成一次页面。')
     return
   }
   visualEditMode.value = !visualEditMode.value
@@ -617,16 +692,16 @@ async function handleDeploy() {
   try {
     const res = await deployAppApi(appId)
     if (res.data.code === 0) {
-      message.success('部署成功')
+      message.success('部署成功，正在打开站点。')
       if (res.data.data) {
         window.open(res.data.data, '_blank')
       }
       await loadApp()
     } else {
-      message.error(res.data.message || '部署失败')
+      message.error(res.data.message || '部署失败，请稍后重试。')
     }
   } catch {
-    message.error('网络异常')
+    message.error('部署失败，请检查后端服务是否正常。')
   } finally {
     deploying.value = false
   }
@@ -643,7 +718,7 @@ async function handleDownload() {
     anchor.click()
     URL.revokeObjectURL(url)
   } catch {
-    message.error('下载失败')
+    message.error('下载代码失败，请稍后重试。')
   }
 }
 
@@ -656,8 +731,8 @@ watch(projectFiles, (files: AppProjectFileVO[]) => {
   if (!selectedFilePath.value || !files.some((item) => item.path === selectedFilePath.value)) {
     selectedFilePath.value = visibleProjectFiles.value[0]?.path || files[0]?.path || ''
   }
-  if (!modalSelectedFilePath.value || !files.some((item) => item.path === modalSelectedFilePath.value)) {
-    modalSelectedFilePath.value = frontendProjectFiles.value[0]?.path || files[0]?.path || ''
+  if (!modalSelectedFilePath.value || !frontendProjectFiles.value.some((item) => item.path === modalSelectedFilePath.value)) {
+    modalSelectedFilePath.value = frontendProjectFiles.value[0]?.path || ''
   }
 })
 
@@ -674,11 +749,20 @@ watch(resolvedPreviewUrl, () => {
   }
 })
 
+watch(uiScale, (value) => {
+  window.localStorage.setItem('editorUiScale', value)
+})
+
 onMounted(async () => {
   const savedWallpaper = window.localStorage.getItem('homeWallpaper')
   if (savedWallpaper === 'bg1' || savedWallpaper === 'bg2' || savedWallpaper === 'bg3') {
     selectedWallpaper.value = savedWallpaper
   }
+  const savedUiScale = window.localStorage.getItem('editorUiScale')
+  if (savedUiScale === 'compact' || savedUiScale === 'default' || savedUiScale === 'expanded') {
+    uiScale.value = savedUiScale
+  }
+
   await loadApp()
   await loadHistory()
   await refreshSnapshot()
@@ -694,7 +778,7 @@ onUnmounted(() => {
 <style scoped>
 .editor-page {
   min-height: 100vh;
-  padding: 82px 24px 28px;
+  padding: 74px 16px 20px;
   background:
     linear-gradient(rgba(255, 255, 255, 0.12), rgba(240, 246, 255, 0.2)),
     var(--editor-bg-image, none),
@@ -705,7 +789,7 @@ onUnmounted(() => {
 
 .page-header,
 .editor-layout {
-  max-width: 1320px;
+  max-width: 1640px;
   margin: 0 auto;
 }
 
@@ -714,7 +798,11 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 24px;
   align-items: center;
-  margin-bottom: 22px;
+  margin-bottom: 16px;
+}
+
+.header-main {
+  min-width: 0;
 }
 
 .back-link {
@@ -731,18 +819,23 @@ onUnmounted(() => {
 
 .page-header p {
   margin: 0;
-  color: rgba(52, 67, 97, 0.88);
+  color: rgba(52, 67, 97, 0.9);
 }
 
 .header-actions {
   display: flex;
   gap: 12px;
+  align-items: center;
+}
+
+.ui-scale-select {
+  min-width: 104px;
 }
 
 .editor-layout {
   display: grid;
-  grid-template-columns: minmax(380px, 460px) minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: var(--editor-agent-width, minmax(680px, 1.2fr)) var(--editor-workspace-width, minmax(0, 0.8fr));
+  gap: 16px;
 }
 
 .glass-panel {
@@ -756,13 +849,17 @@ onUnmounted(() => {
 
 .agent-panel,
 .workspace-panel {
-  min-height: 760px;
+  min-height: var(--editor-panel-min-height, 980px);
 }
 
 .agent-panel {
   display: flex;
   flex-direction: column;
-  padding: 24px;
+  padding: var(--editor-panel-padding, 30px);
+}
+
+.workspace-panel {
+  padding: var(--editor-panel-padding, 30px);
 }
 
 .panel-head {
@@ -784,100 +881,97 @@ onUnmounted(() => {
   border-radius: 18px;
 }
 
-.empty-block {
-  min-height: 220px;
-  display: grid;
-  place-items: center;
-  text-align: center;
-  color: rgba(52, 68, 98, 0.82);
-}
-
-.stream-panels {
+.stream-output {
   flex: 1;
-  min-height: 320px;
-  max-height: 470px;
-  min-width: 0;
-}
-
-.unified-stream {
+  min-height: 360px;
+  max-height: var(--editor-stream-max-height, 680px);
   overflow: auto;
-  border-radius: 22px;
+  border-radius: 24px;
+  padding: 16px 18px;
   background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  padding: 12px 14px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
 }
 
-.compact-empty {
-  min-height: 120px;
-  padding: 8px 4px;
+.stream-empty {
+  color: rgba(55, 72, 104, 0.82);
+  line-height: 1.8;
 }
 
-.message-list {
+.stream-lines {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
-.message-card {
-  padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  background: rgba(255, 255, 255, 0.16);
-  box-shadow: 0 8px 24px rgba(43, 63, 98, 0.08);
+.stream-line {
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
 }
 
-.message-card.user {
-  margin-left: 44px;
-  background: rgba(110, 168, 255, 0.18);
+.stream-line:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
 }
 
-.message-card.agent {
-  margin-right: 44px;
-  background: rgba(255, 255, 255, 0.22);
+.stream-line.user .line-badge {
+  background: rgba(91, 147, 240, 0.18);
+  color: #315d99;
 }
 
-.message-card.pending {
-  border-style: dashed;
+.stream-line.agent .line-badge {
+  background: rgba(255, 255, 255, 0.32);
+  color: #47648a;
 }
 
-.message-card.system {
-  background: rgba(255, 120, 120, 0.16);
+.stream-line.system .line-badge {
+  background: rgba(86, 116, 158, 0.16);
+  color: #50698f;
 }
 
-.message-card.done {
-  background: rgba(255, 255, 255, 0.12);
+.stream-line.tool .line-title {
+  color: #4e6891;
 }
 
-.message-meta {
+.stream-line.error .line-message {
+  color: #a2465a;
+}
+
+.stream-line.pending {
+  opacity: 0.92;
+}
+
+.line-meta {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
-  color: rgba(53, 76, 112, 0.8);
-  font-size: 12px;
 }
 
-.message-role {
+.line-badge {
   padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.28);
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
 }
 
-.message-title {
+.line-title {
+  font-size: 12px;
   font-weight: 600;
+  color: rgba(61, 82, 117, 0.88);
 }
 
-.message-time {
+.line-time {
   margin-left: auto;
+  font-size: 12px;
+  color: rgba(69, 88, 119, 0.66);
 }
 
-.message-text {
+.line-message {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  color: rgba(49, 64, 93, 0.92);
-  line-height: 1.8;
+  line-height: 1.85;
+  color: rgba(45, 62, 91, 0.94);
 }
 
 .message-loading {
@@ -914,7 +1008,7 @@ onUnmounted(() => {
 }
 
 .chat-input {
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 :deep(.chat-input textarea.ant-input) {
@@ -941,10 +1035,6 @@ onUnmounted(() => {
 .action-buttons {
   display: flex;
   gap: 10px;
-}
-
-.workspace-panel {
-  padding: 18px;
 }
 
 .workspace-header {
@@ -983,9 +1073,9 @@ onUnmounted(() => {
 
 .project-panel {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: 260px minmax(0, 1fr);
   gap: 16px;
-  min-height: 680px;
+  min-height: 760px;
 }
 
 .file-tree,
@@ -1052,7 +1142,7 @@ onUnmounted(() => {
   padding: 18px;
   overflow: auto;
   min-height: 0;
-  max-height: 640px;
+  max-height: 760px;
   color: #31425f;
 }
 
@@ -1117,7 +1207,7 @@ onUnmounted(() => {
 .preview-panel,
 .iframe-wrap,
 .iframe-wrap iframe {
-  min-height: 680px;
+  min-height: 760px;
 }
 
 .iframe-wrap {
@@ -1128,6 +1218,14 @@ onUnmounted(() => {
   width: 100%;
   border: 0;
   background: #fff;
+}
+
+.empty-block {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: rgba(52, 68, 98, 0.82);
 }
 
 @media (max-width: 1080px) {
@@ -1146,26 +1244,20 @@ onUnmounted(() => {
 
 @media (max-width: 720px) {
   .editor-page {
-    padding: 76px 14px 18px;
+    padding: 72px 12px 16px;
   }
 
   .page-header,
   .panel-head,
-  .stream-overview,
   .panel-actions,
   .workspace-header {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .overview-side,
   .header-actions,
   .action-buttons {
     width: 100%;
-  }
-
-  .phase-list {
-    grid-template-columns: 1fr;
   }
 
   .action-buttons :deep(.ant-btn),

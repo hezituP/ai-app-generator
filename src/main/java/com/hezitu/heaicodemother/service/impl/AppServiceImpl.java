@@ -28,8 +28,11 @@ import com.hezitu.heaicodemother.model.vo.AppProjectFileVO;
 import com.hezitu.heaicodemother.model.vo.AppProjectSnapshotVO;
 import com.hezitu.heaicodemother.model.vo.AppVO;
 import com.hezitu.heaicodemother.model.vo.UserVO;
+import com.hezitu.heaicodemother.monitor.MonitorContext;
+import com.hezitu.heaicodemother.monitor.MonitorContextHolder;
 import com.hezitu.heaicodemother.service.AppService;
 import com.hezitu.heaicodemother.service.ChatHistoryService;
+import com.hezitu.heaicodemother.service.ScreenshotService;
 import com.hezitu.heaicodemother.service.UserService;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
@@ -86,6 +89,9 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
     @Resource
     private CustomerSupportService customerSupportService;
 
+    @Resource
+    private ScreenshotService screenshotService;
+
     @Override
     public Flux<AgentStreamEvent> chatToGenCode(Long appId, String message, User loginUser) {
         ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "Invalid app id");
@@ -102,6 +108,10 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
             return replyToCustomer(app, message, loginUser);
         }
         StringBuilder aiResponseBuilder = new StringBuilder();
+        MonitorContextHolder.setContext(MonitorContext.builder()
+                .userId(String.valueOf(loginUser.getId()))
+                .appId(String.valueOf(appId))
+                .build());
         return codeGenWorkflow.executeWorkflowStream(appId, loginUser.getId(), message, codeGenTypeEnum)
                 .doOnNext(event -> {
                     if (StrUtil.isNotBlank(event.getMessage())
@@ -124,7 +134,8 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
                     chatHistoryService.addChatMessage(appId,
                             "AI generation failed: " + e.getMessage(),
                             ChatHistoryMessageTypeEnum.ERROR.getValue(), loginUser.getId());
-                });
+                })
+                .doFinally(signalType -> MonitorContextHolder.clearContext());
     }
 
     private AppChatIntentEnum routeChatIntent(String message) {
@@ -359,7 +370,21 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
 
     @Override
     public void generateAppScreenshotAsync(Long appId, String appUrl) {
-        log.info("Reserved screenshot hook, appId: {}, appUrl: {}", appId, appUrl);
+        Thread.startVirtualThread(() -> {
+            try {
+                String screenshotUrl = screenshotService.generateAndUploadScreenshot(appUrl);
+                if (StrUtil.isBlank(screenshotUrl)) {
+                    return;
+                }
+                App updateApp = new App();
+                updateApp.setId(appId);
+                updateApp.setCover(screenshotUrl);
+                boolean updated = this.updateById(updateApp);
+                ThrowUtils.throwIf(!updated, ErrorCode.OPERATION_ERROR, "Update app cover failed");
+            } catch (Exception e) {
+                log.error("Generate app screenshot failed, appId: {}, appUrl: {}", appId, appUrl, e);
+            }
+        });
     }
 
     @Override

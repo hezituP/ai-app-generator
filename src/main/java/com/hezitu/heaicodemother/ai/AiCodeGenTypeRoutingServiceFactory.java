@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class AiCodeGenTypeRoutingServiceFactory {
 
-    @Resource(name = "openAiChatModel")
+    @Resource(name = "routingChatModelPrototype")
     private ChatModel chatModel;
 
     @Bean
