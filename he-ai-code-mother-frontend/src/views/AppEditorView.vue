@@ -3,7 +3,7 @@
     <header class="page-header">
       <div class="header-main">
         <router-link to="/my-apps" class="back-link">返回我的应用</router-link>
-        <h1>{{ app?.appName || 'AI 工程协作区' }}</h1>
+        <h1>{{ app?.appName || 'AI 生成协作区' }}</h1>
         <p>{{ typeLabel }}</p>
       </div>
       <div class="header-actions">
@@ -48,19 +48,18 @@
         </a-alert>
 
         <div ref="messagesRef" class="stream-output">
-          <div v-if="!events.length" class="stream-empty">
-            这里会显示 AI 的历史对话、当前输出和工具执行过程。
+          <div v-if="!displayEvents.length" class="stream-empty">
+            这里会直接展示 AI 返回的生成内容。
           </div>
           <div v-else class="stream-lines">
             <article
-              v-for="item in events"
+              v-for="item in displayEvents"
               :key="item.id"
               class="stream-line"
-              :class="[item.role, item.kind, { pending: item.pending }]"
+              :class="[item.role, { pending: item.pending }]"
             >
               <div class="line-meta">
                 <span class="line-badge">{{ item.roleLabel }}</span>
-                <span v-if="item.title" class="line-title">{{ item.title }}</span>
                 <span class="line-time">{{ item.time }}</span>
               </div>
               <div v-if="item.pending" class="message-loading">
@@ -94,7 +93,7 @@
               {{ visualEditMode ? '退出编辑模式' : '进入编辑模式' }}
             </a-button>
             <a-button type="primary" :loading="streaming" @click="handleSend">
-              发送给 Agent
+              发送给 AI
             </a-button>
           </div>
         </div>
@@ -107,7 +106,7 @@
               工程文件
             </button>
             <button :class="{ active: activeTab === 'preview' }" @click="activeTab = 'preview'">
-              静态预览
+              网站快照
             </button>
           </div>
           <a-button size="small" @click="refreshSnapshot">刷新快照</a-button>
@@ -203,11 +202,9 @@ import myAxios from '@/plugins/myAxios'
 
 interface TimelineEvent {
   id: number
-  type: 'assistant' | 'assistant_delta' | 'status' | 'result' | 'error' | 'done' | 'user' | 'tool'
-  kind: 'message' | 'tool' | 'status' | 'error'
+  type: 'assistant' | 'assistant_delta' | 'status' | 'result' | 'error' | 'done' | 'user'
   role: 'agent' | 'user' | 'system'
   roleLabel: string
-  title: string
   message: string
   time: string
   pending?: boolean
@@ -327,6 +324,9 @@ const resolvedPreviewUrl = computed(() => {
   const separator = projectSnapshot.value.previewUrl.includes('?') ? '&' : '?'
   return `${baseURL.replace(/\/api$/, '')}${projectSnapshot.value.previewUrl}${separator}t=${previewVersion.value}`
 })
+const displayEvents = computed(() =>
+  events.value.filter((item) => item.type === 'assistant' || item.type === 'user' || item.type === 'error'),
+)
 
 const {
   selectedElement,
@@ -378,30 +378,6 @@ function isFrontendProjectFile(path: string) {
     || normalizedPath.startsWith('.env')
 }
 
-function getToolTitle(messageText: string) {
-  const text = messageText.toLowerCase()
-  if (text.includes('分析') || text.includes('需求')) {
-    return 'Requirement Analyzer'
-  }
-  if (text.includes('生成') || text.includes('编排') || text.includes('文件')) {
-    return 'Project Generator'
-  }
-  if (text.includes('构建') || text.includes('预览') || text.includes('dist')) {
-    return 'Preview Builder'
-  }
-  if (text.includes('快照') || text.includes('结果') || text.includes('写入')) {
-    return 'Project Snapshot'
-  }
-  return 'Agent Tool'
-}
-
-function normalizeEventMessage(event: AgentStreamEvent) {
-  if (event.type === 'result' && event.data?.summary) {
-    return event.data.summary
-  }
-  return event.message || ''
-}
-
 function scrollMessagesToBottom() {
   nextTick(() => {
     if (messagesRef.value) {
@@ -414,8 +390,6 @@ function pushEvent(
   type: TimelineEvent['type'],
   messageText: string,
   role: TimelineEvent['role'] = 'agent',
-  kind: TimelineEvent['kind'] = 'message',
-  title = '',
 ) {
   const roleLabelMap: Record<TimelineEvent['role'], string> = {
     user: '我',
@@ -425,10 +399,8 @@ function pushEvent(
   events.value.push({
     id: ++eventId,
     type,
-    kind,
     role,
     roleLabel: roleLabelMap[role],
-    title,
     message: messageText,
     time: formatTime(),
     pending: false,
@@ -442,11 +414,9 @@ function createPendingAssistant() {
   events.value.push({
     id,
     type: 'assistant',
-    kind: 'message',
     role: 'agent',
     roleLabel: 'AI',
-    title: '',
-    message: '正在整理回复...',
+    message: '',
     time: formatTime(),
     pending: true,
   })
@@ -464,23 +434,24 @@ function appendPendingAssistant(delta: string) {
   if (!existing) {
     return
   }
-  if (existing.message === '正在整理回复...') {
-    existing.message = ''
-  }
   existing.message += delta
   existing.pending = true
   existing.time = formatTime()
   scrollMessagesToBottom()
 }
 
-function resolvePendingAssistant(finalMessage: string) {
+function resolvePendingAssistant(finalMessage?: string) {
   if (pendingAssistantEventId == null) {
-    pushEvent('assistant', finalMessage, 'agent', 'message')
+    if (finalMessage) {
+      pushEvent('assistant', finalMessage, 'agent')
+    }
     return
   }
   const existing = events.value.find((item) => item.id === pendingAssistantEventId)
   if (existing) {
-    existing.message = finalMessage || existing.message || '本轮回复已完成。'
+    if (typeof finalMessage === 'string' && finalMessage.length > 0) {
+      existing.message = finalMessage
+    }
     existing.pending = false
     existing.time = formatTime()
   }
@@ -532,7 +503,6 @@ function applySnapshot(snapshot: AppProjectSnapshotVO | null) {
   if (!selectedFilePath.value || !matchedFile) {
     selectedFilePath.value = snapshot?.entryFilePath || frontendProjectFiles.value[0]?.path || files[0]?.path || ''
   }
-  activeTab.value = snapshot?.previewUrl ? 'preview' : 'project'
   if (snapshot?.previewUrl) {
     nextTick(() => syncVisualEditor())
   }
@@ -562,10 +532,8 @@ async function loadHistory() {
     events.value = historyList.map((item, index) => ({
       id: index + 1,
       type: item.messageType === 'user' ? 'user' : item.messageType === 'error' ? 'error' : 'assistant',
-      kind: item.messageType === 'error' ? 'error' : 'message',
       role: item.messageType === 'user' ? 'user' : item.messageType === 'error' ? 'system' : 'agent',
       roleLabel: item.messageType === 'user' ? '我' : item.messageType === 'error' ? '系统' : 'AI',
-      title: '',
       message: item.message,
       time: formatTime(new Date(item.createTime)),
       pending: false,
@@ -590,35 +558,36 @@ async function refreshSnapshot() {
 }
 
 function handleStreamEvent(event: AgentStreamEvent) {
-  const text = normalizeEventMessage(event)
+  if (event.type === 'status') {
+    return
+  }
   if (event.type === 'assistant_delta') {
-    appendPendingAssistant(text)
+    appendPendingAssistant(event.message || '')
     return
   }
   if (event.type === 'assistant') {
-    resolvePendingAssistant(text)
-    return
-  }
-  if (event.type === 'status') {
-    pushEvent('tool', text, 'system', 'tool', getToolTitle(text))
+    resolvePendingAssistant(event.message || '')
     return
   }
   if (event.type === 'result') {
     if (event.data) {
       applySnapshot(event.data)
     }
-    if (text) {
-      resolvePendingAssistant(text)
+    if (event.message) {
+      resolvePendingAssistant(event.message)
+    } else {
+      resolvePendingAssistant()
     }
     return
   }
   if (event.type === 'error') {
-    resolvePendingAssistant('本轮生成中断。')
-    pushEvent('error', text || '生成失败，请稍后重试。', 'system', 'error')
+    resolvePendingAssistant()
+    pushEvent('error', event.message || '生成失败，请稍后重试。', 'system')
     closeStream()
     return
   }
   if (event.type === 'done') {
+    resolvePendingAssistant()
     closeStream()
     void refreshSnapshot()
   }
@@ -630,7 +599,7 @@ async function handleSend() {
     return
   }
 
-  pushEvent('user', content, 'user', 'message')
+  pushEvent('user', content, 'user')
   createPendingAssistant()
   streaming.value = true
 
@@ -649,18 +618,18 @@ async function handleSend() {
         const payload = JSON.parse(evt.data) as AgentStreamEvent
         handleStreamEvent(payload)
       } catch {
-        pushEvent('error', '流式数据解析失败。', 'system', 'error')
+        pushEvent('error', '流式数据解析失败。', 'system')
         closeStream()
       }
     }
     eventSource.onerror = () => {
-      pushEvent('error', '流式连接已断开，请稍后重试。', 'system', 'error')
+      pushEvent('error', '流式连接已断开，请稍后重试。', 'system')
       closeStream()
       void loadHistory()
       void refreshSnapshot()
     }
   } catch {
-    pushEvent('error', '无法建立流式连接。', 'system', 'error')
+    pushEvent('error', '无法建立流式连接。', 'system')
     closeStream()
   }
 }
@@ -733,12 +702,6 @@ watch(projectFiles, (files: AppProjectFileVO[]) => {
   }
   if (!modalSelectedFilePath.value || !frontendProjectFiles.value.some((item) => item.path === modalSelectedFilePath.value)) {
     modalSelectedFilePath.value = frontendProjectFiles.value[0]?.path || ''
-  }
-})
-
-watch(activeTab, (tab) => {
-  if (tab === 'preview') {
-    nextTick(() => syncVisualEditor())
   }
 })
 
@@ -834,7 +797,7 @@ onUnmounted(() => {
 
 .editor-layout {
   display: grid;
-  grid-template-columns: var(--editor-agent-width, minmax(680px, 1.2fr)) var(--editor-workspace-width, minmax(0, 0.8fr));
+  grid-template-columns: var(--editor-agent-width, minmax(600px, 0.9fr)) var(--editor-workspace-width, minmax(0, 1.1fr));
   gap: 16px;
 }
 
@@ -855,11 +818,11 @@ onUnmounted(() => {
 .agent-panel {
   display: flex;
   flex-direction: column;
-  padding: var(--editor-panel-padding, 30px);
+  padding: var(--editor-panel-padding, 32px);
 }
 
 .workspace-panel {
-  padding: var(--editor-panel-padding, 30px);
+  padding: var(--editor-panel-padding, 32px);
 }
 
 .panel-head {
@@ -884,7 +847,7 @@ onUnmounted(() => {
 .stream-output {
   flex: 1;
   min-height: 360px;
-  max-height: var(--editor-stream-max-height, 680px);
+  max-height: var(--editor-stream-max-height, 760px);
   overflow: auto;
   border-radius: 24px;
   padding: 16px 18px;
@@ -924,20 +887,8 @@ onUnmounted(() => {
 }
 
 .stream-line.system .line-badge {
-  background: rgba(86, 116, 158, 0.16);
-  color: #50698f;
-}
-
-.stream-line.tool .line-title {
-  color: #4e6891;
-}
-
-.stream-line.error .line-message {
-  color: #a2465a;
-}
-
-.stream-line.pending {
-  opacity: 0.92;
+  background: rgba(255, 112, 112, 0.16);
+  color: #9b5565;
 }
 
 .line-meta {
@@ -952,12 +903,6 @@ onUnmounted(() => {
   border-radius: 999px;
   font-size: 12px;
   font-weight: 700;
-}
-
-.line-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(61, 82, 117, 0.88);
 }
 
 .line-time {
@@ -1124,7 +1069,8 @@ onUnmounted(() => {
   border-style: dashed;
 }
 
-.code-viewer {
+.code-viewer,
+.modal-code-viewer {
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1144,6 +1090,30 @@ onUnmounted(() => {
   min-height: 0;
   max-height: 760px;
   color: #31425f;
+}
+
+.preview-panel,
+.iframe-wrap,
+.iframe-wrap iframe {
+  min-height: 760px;
+}
+
+.iframe-wrap {
+  overflow: hidden;
+}
+
+.iframe-wrap iframe {
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.empty-block {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: rgba(52, 68, 98, 0.82);
 }
 
 .full-code-modal {
@@ -1174,13 +1144,6 @@ onUnmounted(() => {
   color: #3b5b87;
 }
 
-.modal-code-viewer {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-height: 0;
-}
-
 .modal-code-viewer pre {
   flex: 1;
   margin: 0;
@@ -1204,39 +1167,9 @@ onUnmounted(() => {
   color: #45648e;
 }
 
-.preview-panel,
-.iframe-wrap,
-.iframe-wrap iframe {
-  min-height: 760px;
-}
-
-.iframe-wrap {
-  overflow: hidden;
-}
-
-.iframe-wrap iframe {
-  width: 100%;
-  border: 0;
-  background: #fff;
-}
-
-.empty-block {
-  min-height: 220px;
-  display: grid;
-  place-items: center;
-  text-align: center;
-  color: rgba(52, 68, 98, 0.82);
-}
-
 @media (max-width: 1080px) {
-  .editor-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .project-panel {
-    grid-template-columns: 1fr;
-  }
-
+  .editor-layout,
+  .project-panel,
   .full-code-modal {
     grid-template-columns: 1fr;
   }

@@ -6,11 +6,6 @@ import com.hezitu.heaicodemother.exception.BusinessException;
 import com.hezitu.heaicodemother.exception.ErrorCode;
 import com.hezitu.heaicodemother.model.enums.CodeGenTypeEnum;
 
-/**
- * HTML代码文件保存器
- *
- * @author yupi
- */
 public class HtmlCodeFileSaverTemplate extends CodeFileSaverTemplate<HtmlCodeResult> {
 
     @Override
@@ -24,9 +19,8 @@ public class HtmlCodeFileSaverTemplate extends CodeFileSaverTemplate<HtmlCodeRes
     }
 
     @Override
-    protected void validateInput(HtmlCodeResult result) {
-        super.validateInput(result);
-        // HTML 代码不能为空
+    protected void validateInput(HtmlCodeResult result, String baseDirPath) {
+        super.validateInput(result, baseDirPath);
         if (StrUtil.isBlank(result.getHtmlCode())) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "HTML 代码不能为空");
         }

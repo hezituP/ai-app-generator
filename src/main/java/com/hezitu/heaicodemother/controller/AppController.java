@@ -24,15 +24,14 @@ import com.hezitu.heaicodemother.model.vo.AppVO;
 import com.hezitu.heaicodemother.ratelimter.annotation.RateLimit;
 import com.hezitu.heaicodemother.ratelimter.enums.RateLimitType;
 import com.hezitu.heaicodemother.service.AppService;
+import com.hezitu.heaicodemother.service.ProjectDownloadService;
 import com.hezitu.heaicodemother.service.UserService;
 import com.mybatisflex.core.paginate.Page;
 import com.mybatisflex.core.query.QueryWrapper;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.http.ContentDisposition;
-import org.springframework.http.HttpHeaders;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -44,7 +43,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
-import java.nio.charset.StandardCharsets;
+import java.io.File;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -57,6 +56,9 @@ public class AppController {
 
     @Resource
     private UserService userService;
+
+    @Resource
+    private ProjectDownloadService projectDownloadService;
 
     @PostMapping("/add")
     public BaseResponse<Long> addApp(@RequestBody AppAddRequest appAddRequest, HttpServletRequest request) {
@@ -107,22 +109,31 @@ public class AppController {
         return ResultUtils.success(appService.getAppVO(app));
     }
 
-    @GetMapping("/project/snapshot")
-    public BaseResponse<AppProjectSnapshotVO> getProjectSnapshot(@RequestParam Long appId, HttpServletRequest request) {
+    @GetMapping("/download/{appId}")
+    public void downloadProject(@PathVariable Long appId,
+                                HttpServletRequest request,
+                                HttpServletResponse response) {
         User loginUser = userService.getLoginUser(request);
-        return ResultUtils.success(appService.getProjectSnapshot(appId, loginUser));
+        App app = appService.getById(appId);
+        ThrowUtils.throwIf(app == null, ErrorCode.NOT_FOUND_ERROR, "应用不存在");
+        if (!app.getUserId().equals(loginUser.getId())) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "无权限下载该应用代码");
+        }
+        String sourceDirName = app.getCodeGenType() + "_" + appId;
+        String sourceDirPath = AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + sourceDirName;
+        File sourceDir = new File(sourceDirPath);
+        ThrowUtils.throwIf(!sourceDir.exists() || !sourceDir.isDirectory(),
+                ErrorCode.NOT_FOUND_ERROR, "应用代码不存在，请先生成代码");
+        projectDownloadService.downloadProjectAsZip(sourceDirPath, String.valueOf(appId), response);
     }
 
-    @GetMapping("/download/{appId}")
-    public ResponseEntity<byte[]> downloadProject(@PathVariable Long appId, HttpServletRequest request) {
+    @GetMapping("/project/snapshot")
+    public BaseResponse<AppProjectSnapshotVO> getProjectSnapshot(@RequestParam Long appId,
+                                                                 HttpServletRequest request) {
+        ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 ID 错误");
         User loginUser = userService.getLoginUser(request);
-        byte[] bytes = appService.downloadAppCode(appId, loginUser);
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-        headers.setContentDisposition(ContentDisposition.attachment()
-                .filename("app-" + appId + ".zip", StandardCharsets.UTF_8)
-                .build());
-        return ResponseEntity.ok().headers(headers).body(bytes);
+        AppProjectSnapshotVO snapshot = appService.getProjectSnapshot(appId, loginUser);
+        return ResultUtils.success(snapshot);
     }
 
     @PostMapping("/my/list/page/vo")

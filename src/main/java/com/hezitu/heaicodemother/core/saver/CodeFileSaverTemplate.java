@@ -15,8 +15,8 @@ public abstract class CodeFileSaverTemplate<T> {
     private static final String FILE_SAVE_ROOT_DIR = AppConstant.CODE_OUTPUT_ROOT_DIR;
 
     public final File saveCode(T result, Long appId) {
-        validateInput(result);
         String baseDirPath = buildUniqueDir(appId);
+        validateInput(result, baseDirPath);
         saveFiles(result, baseDirPath);
         return new File(baseDirPath);
     }
@@ -28,7 +28,7 @@ public abstract class CodeFileSaverTemplate<T> {
         }
     }
 
-    protected void validateInput(T result) {
+    protected void validateInput(T result, String baseDirPath) {
         if (result == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "代码结果不能为空");
         }
@@ -41,9 +41,15 @@ public abstract class CodeFileSaverTemplate<T> {
         String codeType = getCodeType().getValue();
         String uniqueDirName = StrUtil.format("{}_{}", codeType, appId);
         String dirPath = FILE_SAVE_ROOT_DIR + File.separator + uniqueDirName;
-        FileUtil.del(dirPath);
+        if (shouldResetDirectory()) {
+            FileUtil.del(dirPath);
+        }
         FileUtil.mkdir(dirPath);
         return dirPath;
+    }
+
+    protected boolean shouldResetDirectory() {
+        return true;
     }
 
     protected abstract void saveFiles(T result, String baseDirPath);

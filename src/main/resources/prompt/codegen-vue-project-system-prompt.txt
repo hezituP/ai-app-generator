@@ -51,4 +51,11 @@ import { createApp } from 'vue'
 如果用户是在已有项目基础上继续修改：
 - 保持已有结构风格一致
 - 仅改动和需求相关的文件
-- 仍然按相同文件块格式输出完整需要变更的文件
+- 只输出本次需要新增或修改的文件，不要重复输出未变更文件
+
+首次生成完整工程时：
+- 必须同时输出 `package.json`
+- 必须同时输出 `index.html`
+- 必须同时输出 `vite.config.ts` 或 `vite.config.js`
+- 必须同时输出 `src/main.ts` 或 `src/main.js`
+- 必须同时输出 `src/App.vue`

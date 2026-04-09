@@ -5,22 +5,18 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
-import com.hezitu.heaicodemother.ai.AppChatIntentRoutingService;
-import com.hezitu.heaicodemother.ai.CustomerSupportService;
 import com.hezitu.heaicodemother.constant.AppConstant;
 import com.hezitu.heaicodemother.core.AiCodeGeneratorFacade;
 import com.hezitu.heaicodemother.core.builder.VueProjectBuilder;
 import com.hezitu.heaicodemother.exception.BusinessException;
 import com.hezitu.heaicodemother.exception.ErrorCode;
 import com.hezitu.heaicodemother.exception.ThrowUtils;
-import com.hezitu.heaicodemother.langgraph4j.CodeGenWorkflow;
 import com.hezitu.heaicodemother.mapper.AppMapper;
 import com.hezitu.heaicodemother.model.dto.app.AppAddRequest;
 import com.hezitu.heaicodemother.model.dto.app.AppQueryRequest;
 import com.hezitu.heaicodemother.model.entity.ChatHistory;
 import com.hezitu.heaicodemother.model.entity.App;
 import com.hezitu.heaicodemother.model.entity.User;
-import com.hezitu.heaicodemother.model.enums.AppChatIntentEnum;
 import com.hezitu.heaicodemother.model.enums.ChatHistoryMessageTypeEnum;
 import com.hezitu.heaicodemother.model.enums.CodeGenTypeEnum;
 import com.hezitu.heaicodemother.model.vo.AgentStreamEvent;
@@ -41,15 +37,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -81,15 +74,6 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
     private VueProjectBuilder vueProjectBuilder;
 
     @Resource
-    private CodeGenWorkflow codeGenWorkflow;
-
-    @Resource
-    private AppChatIntentRoutingService appChatIntentRoutingService;
-
-    @Resource
-    private CustomerSupportService customerSupportService;
-
-    @Resource
     private ScreenshotService screenshotService;
 
     @Override
@@ -103,32 +87,11 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
         }
         chatHistoryService.addChatMessage(appId, message,
                 ChatHistoryMessageTypeEnum.USER.getValue(), loginUser.getId());
-        AppChatIntentEnum chatIntent = routeChatIntent(message);
-        if (chatIntent == AppChatIntentEnum.CUSTOMER_REPLY) {
-            return replyToCustomer(app, message, loginUser);
-        }
-        StringBuilder aiResponseBuilder = new StringBuilder();
         MonitorContextHolder.setContext(MonitorContext.builder()
                 .userId(String.valueOf(loginUser.getId()))
                 .appId(String.valueOf(appId))
                 .build());
-        return codeGenWorkflow.executeWorkflowStream(appId, loginUser.getId(), message, codeGenTypeEnum)
-                .doOnNext(event -> {
-                    if (StrUtil.isNotBlank(event.getMessage())
-                            && ("assistant".equals(event.getType()) || "result".equals(event.getType()))) {
-                        if (aiResponseBuilder.length() > 0) {
-                            aiResponseBuilder.append("\n");
-                        }
-                        aiResponseBuilder.append(event.getMessage());
-                    }
-                })
-                .doOnComplete(() -> {
-                    String aiResponse = aiResponseBuilder.toString().trim();
-                    if (StrUtil.isNotBlank(aiResponse)) {
-                    chatHistoryService.addChatMessage(appId, aiResponse,
-                                ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
-                    }
-                })
+        return aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId, loginUser.getId())
                 .doOnError(e -> {
                     log.error("AI code generation failed, appId: {}, error: {}", appId, e.getMessage(), e);
                     chatHistoryService.addChatMessage(appId,
@@ -138,136 +101,9 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
                 .doFinally(signalType -> MonitorContextHolder.clearContext());
     }
 
-    private AppChatIntentEnum routeChatIntent(String message) {
-        if (StrUtil.isBlank(message)) {
-            return AppChatIntentEnum.CODE_GEN;
-        }
-        try {
-            AppChatIntentEnum intent = parseIntent(appChatIntentRoutingService.routeIntent(message));
-            return intent == null ? fallbackIntent(message) : intent;
-        } catch (Exception e) {
-            log.warn("Route chat intent failed, fallback to keyword rule: {}", e.getMessage());
-            return fallbackIntent(message);
-        }
-    }
 
-    private AppChatIntentEnum parseIntent(String rawIntent) {
-        if (StrUtil.isBlank(rawIntent)) {
-            return null;
-        }
-        String normalized = StrUtil.trim(rawIntent).toLowerCase();
-        if (normalized.contains(AppChatIntentEnum.CUSTOMER_REPLY.getValue())
-                || normalized.contains("customer_reply")
-                || normalized.contains("customer reply")) {
-            return AppChatIntentEnum.CUSTOMER_REPLY;
-        }
-        if (normalized.contains(AppChatIntentEnum.CODE_GEN.getValue())
-                || normalized.contains("code_gen")
-                || normalized.contains("code gen")) {
-            return AppChatIntentEnum.CODE_GEN;
-        }
-        return null;
-    }
 
-    private AppChatIntentEnum fallbackIntent(String message) {
-        String normalized = StrUtil.trim(message).toLowerCase();
-        boolean asksQuestion = StrUtil.containsAny(normalized,
-                "为什么", "怎么", "怎样", "说说", "解释", "什么意思",
-                "刚刚", "为啥", "怎么设计", "做了什么", "是什么",
-                "why", "how", "what", "explain");
-        boolean asksForCodeChange = StrUtil.containsAny(normalized,
-                "修改", "生成", "新增", "增加", "实现", "调整",
-                "重构", "改一下", "优化", "修复", "改样式", "改布局",
-                "build", "generate", "modify", "update", "change", "fix");
-        if (asksQuestion && !asksForCodeChange) {
-            return AppChatIntentEnum.CUSTOMER_REPLY;
-        }
-        return AppChatIntentEnum.CODE_GEN;
-    }
 
-    private Flux<AgentStreamEvent> replyToCustomer(App app, String userMessage, User loginUser) {
-        return Mono.fromCallable(() -> {
-                    String prompt = buildCustomerReplyPrompt(app, userMessage, loginUser.getId());
-                    String reply = customerSupportService.reply(prompt);
-                    return StrUtil.blankToDefault(reply, "我先回答你这个问题。如果你希望我直接改页面，也可以继续告诉我具体要怎么改。");
-                })
-                .subscribeOn(Schedulers.boundedElastic())
-                .timeout(Duration.ofSeconds(25))
-                .map(finalReply -> {
-                    chatHistoryService.addChatMessage(app.getId(), finalReply,
-                            ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
-                    return finalReply;
-                })
-                .onErrorResume(e -> {
-                    log.error("Customer reply failed, appId: {}, error: {}", app.getId(), e.getMessage(), e);
-                    String fallbackReply = buildFallbackCustomerReply(app, userMessage);
-                    chatHistoryService.addChatMessage(app.getId(), fallbackReply,
-                            ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
-                    return Mono.just(fallbackReply);
-                })
-                .flatMapMany(finalReply -> Flux.just(
-                        AgentStreamEvent.assistant(finalReply),
-                        AgentStreamEvent.done()
-                ));
-    }
-
-    private String buildFallbackCustomerReply(App app, String userMessage) {
-        StringBuilder reply = new StringBuilder("我先结合当前工程给你一个简要说明。");
-        try {
-            CodeGenTypeEnum codeGenTypeEnum = CodeGenTypeEnum.getEnumByValue(app.getCodeGenType());
-            if (codeGenTypeEnum != null) {
-                AppProjectSnapshotVO snapshotVO =
-                        aiCodeGeneratorFacade.buildProjectSnapshot(codeGenTypeEnum, app.getId(), "Current snapshot");
-                if (snapshotVO != null && StrUtil.isNotBlank(snapshotVO.getSummary())) {
-                    reply.append("\n\n当前我能确认的是：").append(snapshotVO.getSummary());
-                }
-            }
-        } catch (Exception e) {
-            log.warn("Build fallback customer reply snapshot failed: {}", e.getMessage());
-        }
-        reply.append("\n\n如果你想了解某一块为什么这样设计，可以直接告诉我页面、组件或功能点，我会按那一部分继续解释。");
-        if (StrUtil.containsAnyIgnoreCase(userMessage, "design", "why", "how", "设计", "为什么", "怎么")) {
-            reply.append("\n这次我会按设计思路来解释，不会直接改动代码。");
-        }
-        return reply.toString();
-    }
-
-    private String buildCustomerReplyPrompt(App app, String userMessage, Long userId) {
-        StringBuilder promptBuilder = new StringBuilder();
-        promptBuilder.append("应用名称: ").append(StrUtil.blankToDefault(app.getAppName(), "未命名应用")).append("\n");
-        promptBuilder.append("项目类型: ").append(StrUtil.blankToDefault(app.getCodeGenType(), "unknown")).append("\n");
-        AppProjectSnapshotVO snapshotVO = null;
-        try {
-            CodeGenTypeEnum codeGenTypeEnum = CodeGenTypeEnum.getEnumByValue(app.getCodeGenType());
-            if (codeGenTypeEnum != null) {
-                snapshotVO = aiCodeGeneratorFacade.buildProjectSnapshot(codeGenTypeEnum, app.getId(), "Current snapshot");
-            }
-        } catch (Exception e) {
-            log.warn("Build snapshot for customer reply failed: {}", e.getMessage());
-        }
-        if (snapshotVO != null) {
-            promptBuilder.append("项目摘要: ")
-                    .append(StrUtil.blankToDefault(snapshotVO.getSummary(), "暂无摘要"))
-                    .append("\n");
-            appendKeyFiles(promptBuilder, snapshotVO.getFiles());
-            promptBuilder.append("\n");
-        }
-        List<ChatHistory> historyList = chatHistoryService.listChatHistory(app.getId(), null, 4);
-        if (CollUtil.isNotEmpty(historyList)) {
-            promptBuilder.append("最近对话摘要:\n");
-            historyList.forEach(history -> promptBuilder.append(history.getMessageType())
-                    .append(": ")
-                    .append(StrUtil.maxLength(StrUtil.blankToDefault(history.getMessage(), ""), 160))
-                    .append("\n"));
-            promptBuilder.append("\n");
-        }
-        promptBuilder.append("客户当前问题:\n").append(userMessage).append("\n\n");
-        promptBuilder.append("回答要求:\n");
-        promptBuilder.append("1. 直接评价或解释，不要复述上下文。\n");
-        promptBuilder.append("2. 优先说优点、问题和可改进点。\n");
-        promptBuilder.append("3. 控制在 3 到 6 句，语言自然。\n");
-        return promptBuilder.toString();
-    }
 
     private void appendKeyFiles(StringBuilder promptBuilder, List<AppProjectFileVO> files) {
         if (CollUtil.isEmpty(files)) {
