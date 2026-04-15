@@ -66,3 +66,6 @@ management:
   endpoint:
     health:
       show-details: always
+
+code:
+  deploy-host: http://localhost:8848/api/deploy

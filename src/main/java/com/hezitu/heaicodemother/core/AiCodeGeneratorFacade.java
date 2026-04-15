@@ -319,9 +319,9 @@ public class AiCodeGeneratorFacade {
                         sink.next(AgentStreamEvent.status("Vue 工程已生成，正在构建静态预览"));
                         boolean previewBuilt = vueProjectBuilder.buildProject(saveDir.getAbsolutePath());
                         if (previewBuilt) {
-                            sink.next(AgentStreamEvent.status("静态预览已构建完成，可直接进入可视化编辑"));
+                            sink.next(AgentStreamEvent.status("preview-build-success"));
                         } else {
-                            sink.next(AgentStreamEvent.status("静态预览构建失败，当前可先查看源码并继续修改"));
+                            sink.next(AgentStreamEvent.status("preview-build-failed"));
                         }
                     }
                     AppProjectSnapshotVO snapshot = buildProjectSnapshot(codeGenType, appId, extractSummary(completeCode, codeGenType));

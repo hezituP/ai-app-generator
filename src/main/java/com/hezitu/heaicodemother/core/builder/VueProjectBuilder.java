@@ -2,6 +2,7 @@ package com.hezitu.heaicodemother.core.builder;
 
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.core.util.ReUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Component;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 @Component
@@ -23,6 +25,18 @@ public class VueProjectBuilder {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
             .enable(SerializationFeature.INDENT_OUTPUT);
+
+    private static final Map<String, String> MIN_DEPENDENCY_VERSIONS = Map.of(
+            "vue", "^3.4.38",
+            "@vitejs/plugin-vue", "^5.1.4",
+            "vite", "^5.4.10",
+            "typescript", "^5.6.3",
+            "vue-tsc", "^2.1.8",
+            "vue-router", "^4.4.5",
+            "sass", "^1.79.5",
+            "postcss", "^8.4.47",
+            "autoprefixer", "^10.4.20"
+    );
 
     public boolean buildProject(String projectPath) {
         File projectDir = new File(projectPath);
@@ -173,22 +187,25 @@ public class VueProjectBuilder {
                     || containsInFile(new File(projectDir, "vite.config.js"), "postcss");
 
             boolean changed = false;
-            changed |= putIfMissing(dependencies, "vue", "^3.4.21");
-            changed |= putIfMissing(devDependencies, "@vitejs/plugin-vue", "^5.0.4");
-            changed |= putIfMissing(devDependencies, "vite", "^5.1.0");
-            changed |= putIfMissing(devDependencies, "typescript", "^5.2.2");
-            changed |= putIfMissing(devDependencies, "vue-tsc", "^1.8.27");
+            changed |= ensureVersion(dependencies, "vue");
+            changed |= ensureVersion(devDependencies, "@vitejs/plugin-vue");
+            changed |= ensureVersion(devDependencies, "vite");
+            changed |= ensureVersion(devDependencies, "typescript");
+            changed |= ensureVersion(devDependencies, "vue-tsc");
             if (hasScss) {
-                changed |= putIfMissing(devDependencies, "sass", "^1.71.0");
+                changed |= ensureVersion(devDependencies, "sass");
             }
             if (hasRouter) {
-                changed |= putIfMissing(dependencies, "vue-router", "^4.2.5");
+                changed |= ensureVersion(dependencies, "vue-router");
             }
             if (hasPostcssConfig) {
-                changed |= putIfMissing(devDependencies, "postcss", "^8.4.38");
-                changed |= putIfMissing(devDependencies, "autoprefixer", "^10.4.19");
+                changed |= ensureVersion(devDependencies, "postcss");
+                changed |= ensureVersion(devDependencies, "autoprefixer");
                 ensurePostcssConfig(projectDir);
             }
+
+            ObjectNode scripts = getOrCreateObject(root, "scripts");
+            changed |= setScriptIfNeeded(scripts, "build", "vite build");
 
             if (changed) {
                 FileUtil.writeUtf8String(OBJECT_MAPPER.writeValueAsString(root) + System.lineSeparator(), packageJsonFile);
@@ -217,7 +234,39 @@ public class VueProjectBuilder {
         sanitized = sanitized.replaceAll("(?m)^```[\\w-]*\\s*$", "");
         sanitized = sanitized.replaceAll("(?m)^```\\s*$", "");
         sanitized = repairCollapsedStyleLines(sanitized);
+        sanitized = sanitizeVueSingleFileComponent(sanitized);
         return sanitized.trim() + System.lineSeparator();
+    }
+
+    private String sanitizeVueSingleFileComponent(String content) {
+        String trimmed = StrUtil.trim(content);
+        if (StrUtil.isBlank(trimmed) || !trimmed.contains("<template")) {
+            return content;
+        }
+
+        int templateStart = trimmed.indexOf("<template");
+        if (templateStart > 0) {
+            trimmed = trimmed.substring(templateStart);
+        }
+
+        int lastValidEnd = findLastValidVueBlockEnd(trimmed);
+        if (lastValidEnd > 0 && lastValidEnd < trimmed.length()) {
+            trimmed = trimmed.substring(0, lastValidEnd);
+        }
+
+        trimmed = ReUtil.replaceAll(trimmed,
+                "(?s)(</style>|</script>|</template>)\\s*[\\p{IsHan}A-Za-z0-9#*].*$",
+                "$1");
+        return trimmed;
+    }
+
+    private int findLastValidVueBlockEnd(String content) {
+        int lastTemplate = content.lastIndexOf("</template>");
+        int lastScript = content.lastIndexOf("</script>");
+        int lastStyle = content.lastIndexOf("</style>");
+        return Math.max(lastTemplate >= 0 ? lastTemplate + "</template>".length() : -1,
+                Math.max(lastScript >= 0 ? lastScript + "</script>".length() : -1,
+                        lastStyle >= 0 ? lastStyle + "</style>".length() : -1));
     }
 
     private String repairCollapsedStyleLines(String content) {
@@ -247,6 +296,28 @@ public class VueProjectBuilder {
                 }
                 """, postcssConfig);
         log.info("Created missing PostCSS config: {}", postcssConfig.getAbsolutePath());
+    }
+
+    private boolean ensureVersion(ObjectNode dependencies, String dependencyName) {
+        String targetVersion = MIN_DEPENDENCY_VERSIONS.get(dependencyName);
+        if (targetVersion == null) {
+            return false;
+        }
+        String currentVersion = dependencies.path(dependencyName).asText(null);
+        if (StrUtil.equals(currentVersion, targetVersion)) {
+            return false;
+        }
+        dependencies.put(dependencyName, targetVersion);
+        return true;
+    }
+
+    private boolean setScriptIfNeeded(ObjectNode scripts, String scriptName, String targetCommand) {
+        String currentCommand = scripts.path(scriptName).asText(null);
+        if (StrUtil.equals(currentCommand, targetCommand)) {
+            return false;
+        }
+        scripts.put(scriptName, targetCommand);
+        return true;
     }
 
     private boolean repairBootstrapFiles(File projectDir) {

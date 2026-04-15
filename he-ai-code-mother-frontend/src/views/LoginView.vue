@@ -63,7 +63,9 @@ async function handleLogin() {
       message.success('登录成功！')
       router.push((route.query.redirect as string) || '/')
     } else { message.error(res.data.message || '登录失败') }
-  } catch { message.error('网络异常') }
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '网络异常，请检查后端服务或接口地址')
+  }
   finally { loading.value = false }
 }
 </script>

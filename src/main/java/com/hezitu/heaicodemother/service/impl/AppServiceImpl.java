@@ -11,6 +11,7 @@ import com.hezitu.heaicodemother.core.builder.VueProjectBuilder;
 import com.hezitu.heaicodemother.exception.BusinessException;
 import com.hezitu.heaicodemother.exception.ErrorCode;
 import com.hezitu.heaicodemother.exception.ThrowUtils;
+import com.hezitu.heaicodemother.langgraph4j.CodeGenWorkflow;
 import com.hezitu.heaicodemother.mapper.AppMapper;
 import com.hezitu.heaicodemother.model.dto.app.AppAddRequest;
 import com.hezitu.heaicodemother.model.dto.app.AppQueryRequest;
@@ -76,6 +77,9 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
     @Resource
     private ScreenshotService screenshotService;
 
+    @Resource
+    private CodeGenWorkflow codeGenWorkflow;
+
     @Override
     public Flux<AgentStreamEvent> chatToGenCode(Long appId, String message, User loginUser) {
         ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "Invalid app id");
@@ -91,7 +95,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
                 .userId(String.valueOf(loginUser.getId()))
                 .appId(String.valueOf(appId))
                 .build());
-        return aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId, loginUser.getId())
+        return codeGenWorkflow.executeWorkflowStream(appId, loginUser.getId(), message, codeGenTypeEnum)
                 .doOnError(e -> {
                     log.error("AI code generation failed, appId: {}, error: {}", appId, e.getMessage(), e);
                     chatHistoryService.addChatMessage(appId,
@@ -101,9 +105,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
                 .doFinally(signalType -> MonitorContextHolder.clearContext());
     }
 
-
-
-
+    
 
     private void appendKeyFiles(StringBuilder promptBuilder, List<AppProjectFileVO> files) {
         if (CollUtil.isEmpty(files)) {

@@ -22,6 +22,8 @@ public class ImageSearchTool {
 
     private static final String PEXELS_API_URL = "https://api.pexels.com/v1/search";
 
+    private static final int REQUEST_TIMEOUT_MILLIS = 8000;
+
     @Value("${pexels.api-key:}")
     private String pexelsApiKey;
 
@@ -36,6 +38,7 @@ public class ImageSearchTool {
             return imageList;
         }
         try (HttpResponse response = HttpRequest.get(PEXELS_API_URL)
+                .timeout(REQUEST_TIMEOUT_MILLIS)
                 .header("Authorization", pexelsApiKey)
                 .form("query", query)
                 .form("per_page", 8)

@@ -56,7 +56,7 @@
               v-for="item in displayEvents"
               :key="item.id"
               class="stream-line"
-              :class="[item.role, { pending: item.pending }]"
+              :class="[item.role, item.type, { pending: item.pending }]"
             >
               <div class="line-meta">
                 <span class="line-badge">{{ item.roleLabel }}</span>
@@ -71,6 +71,19 @@
             </article>
           </div>
         </div>
+
+        <a-alert
+          v-if="systemNotice"
+          class="system-notice"
+          type="warning"
+          show-icon
+          closable
+          @close="systemNotice = ''"
+        >
+          <template #message>
+            {{ systemNotice }}
+          </template>
+        </a-alert>
 
         <a-textarea
           v-model:value="inputMsg"
@@ -191,6 +204,7 @@ import {
   downloadAppCodeApi,
   getAppVOByIdApi,
   getProjectSnapshotApi,
+  resolveDeployUrl,
   type AgentStreamEvent,
   type AppProjectFileVO,
   type AppProjectSnapshotVO,
@@ -228,6 +242,7 @@ const messagesRef = ref<HTMLElement | null>(null)
 const previewFrameRef = ref<HTMLIFrameElement | null>(null)
 const events = ref<TimelineEvent[]>([])
 const visualEditMode = ref(false)
+const systemNotice = ref('')
 const selectedWallpaper = ref<'bg1' | 'bg2' | 'bg3'>('bg1')
 const uiScale = ref<UiScale>('expanded')
 const previewVersion = ref(0)
@@ -325,7 +340,12 @@ const resolvedPreviewUrl = computed(() => {
   return `${baseURL.replace(/\/api$/, '')}${projectSnapshot.value.previewUrl}${separator}t=${previewVersion.value}`
 })
 const displayEvents = computed(() =>
-  events.value.filter((item) => item.type === 'assistant' || item.type === 'user' || item.type === 'error'),
+  events.value.filter((item) =>
+    item.type === 'assistant'
+    || item.type === 'user'
+    || item.type === 'error'
+    || item.type === 'status',
+  ),
 )
 
 const {
@@ -386,6 +406,51 @@ function scrollMessagesToBottom() {
   })
 }
 
+function resolveStatusNotice(statusMessage: string) {
+  if (statusMessage === 'image-search-timeout') {
+    return '本轮图片搜索超时，已自动跳过搜图并继续生成页面。'
+  }
+  if (statusMessage === 'image-search-skipped') {
+    return '本轮没有拿到可用图片资源，系统已跳过搜图并继续生成。'
+  }
+  if (statusMessage === 'preview-build-failed') {
+    return '网站快照构建失败，通常是生成代码结构异常或本地 Node / 依赖环境兼容问题。你仍然可以先查看右侧代码结果。'
+  }
+  return ''
+}
+
+function resolveStatusTimelineMessage(statusMessage: string) {
+  const statusMap: Record<string, string> = {
+    'workflow:image_collection': '正在收集可用图片与视觉素材…',
+    'workflow:prompt_enhancement': '正在整理提示词与视觉资源…',
+    'workflow:routing': '正在判断最合适的生成模式…',
+    'workflow:code_generation': '代码已生成，正在整理工程文件…',
+    'workflow:project_build': '正在构建静态预览与项目快照…',
+    'Agent 已接管任务，正在分析你的需求': 'AI 已接收需求，正在分析页面目标…',
+    '正在生成 HTML 的工程内容': '正在生成 HTML 页面内容…',
+    '正在生成 多文件应用 的工程内容': '正在生成多文件站点内容…',
+    '正在生成 Vue3 + Vite 项目 的工程内容': '正在生成 Vue3 + Vite 工程内容…',
+    '正在编排项目文件、组件与依赖关系': '正在编排项目文件、组件与依赖关系…',
+    '正在整理可落地的工程结构与输出结果': '正在整理可落地的工程结构与输出结果…',
+    '代码生成完成，正在解析并写入工程文件': '代码正文已完成，正在写入工程文件…',
+    'Vue 工程已生成，正在构建静态预览': 'Vue 工程已生成，正在构建静态预览…',
+    '工程快照已准备完成，正在返回文件树与预览信息': '工程快照已准备完成，正在返回文件树与预览信息…',
+    'preview-build-success': '静态预览构建完成，可以查看快照了。',
+  }
+  if (statusMap[statusMessage]) {
+    return statusMap[statusMessage]
+  }
+  if (statusMessage.startsWith('workflow:')) {
+    return ''
+  }
+  if (statusMessage === 'image-search-timeout'
+    || statusMessage === 'image-search-skipped'
+    || statusMessage === 'preview-build-failed') {
+    return ''
+  }
+  return statusMessage
+}
+
 function pushEvent(
   type: TimelineEvent['type'],
   messageText: string,
@@ -394,7 +459,7 @@ function pushEvent(
   const roleLabelMap: Record<TimelineEvent['role'], string> = {
     user: '我',
     agent: 'AI',
-    system: '系统',
+    system: type === 'status' ? '进度' : '系统',
   }
   events.value.push({
     id: ++eventId,
@@ -559,6 +624,14 @@ async function refreshSnapshot() {
 
 function handleStreamEvent(event: AgentStreamEvent) {
   if (event.type === 'status') {
+    const notice = resolveStatusNotice(event.message || '')
+    if (notice) {
+      systemNotice.value = notice
+    }
+    const timelineMessage = resolveStatusTimelineMessage(event.message || '')
+    if (timelineMessage) {
+      pushEvent('status', timelineMessage, 'system')
+    }
     return
   }
   if (event.type === 'assistant_delta') {
@@ -573,11 +646,7 @@ function handleStreamEvent(event: AgentStreamEvent) {
     if (event.data) {
       applySnapshot(event.data)
     }
-    if (event.message) {
-      resolvePendingAssistant(event.message)
-    } else {
-      resolvePendingAssistant()
-    }
+    resolvePendingAssistant()
     return
   }
   if (event.type === 'error') {
@@ -600,8 +669,8 @@ async function handleSend() {
   }
 
   pushEvent('user', content, 'user')
-  createPendingAssistant()
   streaming.value = true
+  systemNotice.value = ''
 
   const prompt = buildPromptWithSelection(content)
   inputMsg.value = ''
@@ -654,7 +723,7 @@ function handleClearSelectedElement() {
 
 async function handleDeploy() {
   if (app.value?.deployKey) {
-    window.open(`/preview/${app.value.deployKey}`, '_blank')
+    window.open(resolveDeployUrl(app.value.deployKey), '_blank')
     return
   }
   deploying.value = true
@@ -844,6 +913,11 @@ onUnmounted(() => {
   border-radius: 18px;
 }
 
+.system-notice {
+  margin-top: 14px;
+  border-radius: 18px;
+}
+
 .stream-output {
   flex: 1;
   min-height: 360px;
@@ -871,6 +945,11 @@ onUnmounted(() => {
   border-bottom: 1px solid rgba(255, 255, 255, 0.18);
 }
 
+.stream-line.status {
+  padding: 0 0 8px;
+  border-bottom: 0;
+}
+
 .stream-line:last-child {
   border-bottom: 0;
   padding-bottom: 0;
@@ -889,6 +968,20 @@ onUnmounted(() => {
 .stream-line.system .line-badge {
   background: rgba(255, 112, 112, 0.16);
   color: #9b5565;
+}
+
+.stream-line.status .line-meta {
+  margin-bottom: 4px;
+}
+
+.stream-line.status .line-badge {
+  background: rgba(83, 106, 145, 0.12);
+  color: rgba(70, 92, 129, 0.82);
+  font-weight: 600;
+}
+
+.stream-line.status .line-time {
+  color: rgba(88, 105, 136, 0.48);
 }
 
 .line-meta {
@@ -917,6 +1010,12 @@ onUnmounted(() => {
   word-break: break-word;
   line-height: 1.85;
   color: rgba(45, 62, 91, 0.94);
+}
+
+.stream-line.status .line-message {
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(71, 91, 126, 0.74);
 }
 
 .message-loading {
