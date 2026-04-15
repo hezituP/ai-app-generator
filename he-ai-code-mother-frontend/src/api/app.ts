@@ -69,6 +69,17 @@ export interface AgentStreamEvent {
   data?: AppProjectSnapshotVO
 }
 
+export const resolveDeployUrl = (deployKey?: string) => {
+  if (!deployKey) {
+    return ''
+  }
+  if (/^https?:\/\//.test(deployKey)) {
+    return deployKey
+  }
+  const baseURL = (myAxios.defaults.baseURL || '') as string
+  return `${baseURL.replace(/\/$/, '')}/deploy/${deployKey}/`
+}
+
 export const addAppApi = (data: AppAddRequest) => myAxios.post('/app/add', data)
 export const updateAppApi = (data: AppUpdateRequest) => myAxios.post('/app/update', data)
 export const deleteAppApi = (id: string) => myAxios.post('/app/delete', { id })

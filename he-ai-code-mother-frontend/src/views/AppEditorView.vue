@@ -191,6 +191,7 @@ import {
   downloadAppCodeApi,
   getAppVOByIdApi,
   getProjectSnapshotApi,
+  resolveDeployUrl,
   type AgentStreamEvent,
   type AppProjectFileVO,
   type AppProjectSnapshotVO,
@@ -654,7 +655,7 @@ function handleClearSelectedElement() {
 
 async function handleDeploy() {
   if (app.value?.deployKey) {
-    window.open(`/preview/${app.value.deployKey}`, '_blank')
+    window.open(resolveDeployUrl(app.value.deployKey), '_blank')
     return
   }
   deploying.value = true
